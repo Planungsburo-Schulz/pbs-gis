@@ -1,0 +1,14 @@
+name: mv_dop
+description: "MV DOP20 — Digitale Orthophotos Mecklenburg-Vorpommern, 20cm Bodenauflösung, Echtfarben (RGB). Open Data, © GeoBasis-DE/M-V. Attribution erforderlich."
+tags: [dop, orthophoto, luftbild, aerial, rgb, MV, mecklenburg-vorpommern, open-data]
+
+connection:
+  type: wms
+  url: "https://www.geodaten-mv.de/dienste/adv_dop"
+  layer: "mv_dop"
+  crs: "EPSG:25833"
+
+detection:
+  mode: areas
+  area_background: alpha
+  download_only: true

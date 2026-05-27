@@ -1,5 +1,5 @@
 name: mv_alkis
-description: "ALKIS MV — amtliches Liegenschaftskataster Mecklenburg-Vorpommern (Gebäude, Flurstücke, Nutzungen, Verwaltung). Nur häufig benötigte Layer enthalten; der WFS-Endpunkt hat 100+ Layer. `gis-workflow check-recipes mv_alkis` zeigt verfügbare Layer."
+description: "ALKIS MV — amtliches Liegenschaftskataster Mecklenburg-Vorpommern (Gebäude, Flurstücke, Nutzungen, Verwaltung). Nur häufig benötigte Layer enthalten; der WFS-Endpunkt hat 100+ Layer. `gis-workflow check-recipes mv_alkis` zeigt verfügbare Layer. **Flurstück-Suche:** Niemals den vollständigen `flurstuecke`-Layer als WFS in QGIS laden und dann clientseitig filtern — bei ~2 Mio Features blockt das Attribut-Filter aus QGIS heraus (60s+ Timeout). Stattdessen `gis_utils.find_flurstuecke()` oder das `fetch_flurstuecke` Template nutzen — diese senden Stored-Query oder bbox-gefilterte Anfragen direkt an den WFS."
 tags: [ALKIS, kataster, amtlich, MV, mecklenburg-vorpommern, gebäude, flurstück]
 
 connection:
