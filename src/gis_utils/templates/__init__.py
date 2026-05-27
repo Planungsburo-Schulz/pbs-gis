@@ -81,7 +81,9 @@ from gis_utils.templates import (  # noqa: E402, F401
     dxf_extract_layers,
     dxf_lines_to_polygon,
     dxf_verification,
+    fetch_flurstuecke,
     layout_from_qpt,
+    lines_to_polygon,
     point_buffer_union,
     polygon_difference,
 )
