@@ -117,6 +117,90 @@ def area_by_category(
     return result.sort_values("category").reset_index(drop=True)
 
 
+def _auto_metrics_for(gdf: gpd.GeoDataFrame) -> list[str]:
+    """Pick reasonable default metrics based on geometry type.
+
+    Polygons → ['length', 'area']  (length = perimeter, from boundary)
+    Lines    → ['length']
+    Other    → []
+    """
+    if gdf.empty:
+        return []
+    gt = str(gdf.geom_type.iloc[0])
+    if "Polygon" in gt:
+        return ["length", "area"]
+    if "Line" in gt:
+        return ["length"]
+    return []
+
+
+def area_length_report(
+    layers: dict[str, gpd.GeoDataFrame],
+    *,
+    crs: str,
+    title: str = "Geometry Report",
+    metrics_per_layer: dict[str, list[str]] | None = None,
+    number_format: str = ",.1f",
+) -> str:
+    """Generate a markdown report combining area and length per layer.
+
+    Polygon layers report both perimeter (length of boundary) and area;
+    line layers report length. Override per-layer via ``metrics_per_layer``,
+    e.g. ``{"Outer fence": ["length"]}`` to suppress area on a polygon.
+
+    Args:
+        layers: Dict of {layer_name: GeoDataFrame}.
+        crs: Projected CRS for measurements (must use metres).
+        title: Report title (rendered as h1).
+        metrics_per_layer: Optional override of which metrics to compute per
+            layer. Allowed metrics: ``"length"``, ``"area"``.
+        number_format: Python format spec applied to numeric values.
+
+    Returns:
+        Markdown string ready to write to a file. Each layer becomes a
+        bullet list of metrics; areas additionally include hectares.
+    """
+    metrics_per_layer = metrics_per_layer or {}
+    out: list[str] = [f"# {title}", ""]
+
+    for name, gdf in layers.items():
+        out.append(f"## {name}")
+        if gdf.empty:
+            out.append("- (leer)")
+            out.append("")
+            continue
+        gdf_proj = gdf.to_crs(crs) if gdf.crs and str(gdf.crs) != crs else gdf
+        metrics = metrics_per_layer.get(name, _auto_metrics_for(gdf_proj))
+        if not metrics:
+            out.append("- (keine Metriken — Geometrie weder Linie noch Polygon)")
+            out.append("")
+            continue
+
+        gt = str(gdf_proj.geom_type.iloc[0])
+        for metric in metrics:
+            if metric == "length":
+                if "Polygon" in gt:
+                    val = gdf_proj.geometry.boundary.length.sum()
+                    label = "Länge (Umfang)"
+                else:
+                    val = gdf_proj.geometry.length.sum()
+                    label = "Länge"
+                out.append(f"- **{label}:** {val:{number_format}} m")
+            elif metric == "area":
+                area_m2 = gdf_proj.geometry.area.sum()
+                out.append(
+                    f"- **Fläche:** {area_m2:{number_format}} m² "
+                    f"({area_m2/10_000:.3f} ha)"
+                )
+            else:
+                raise ValueError(
+                    f"Unknown metric {metric!r}; valid: 'length', 'area'"
+                )
+        out.append("")
+
+    return "\n".join(out)
+
+
 def area_report(
     layers: dict[str, gpd.GeoDataFrame],
     *,
