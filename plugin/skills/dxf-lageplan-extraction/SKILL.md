@@ -75,6 +75,20 @@ layers = extract_dxf_layers(DXF_PATH, CRS, layers=["Baufeld", "Module"])
 
 (Wölzow's `scripts/create_shapes.py` ist ein gutes Reference-Pattern für Weg 3.)
 
+### DXF in lokalem CAD-System georeferenzieren
+
+Über kleine Offsets hinaus: manche Vermesser-/Architekten-DXF liegen in einem **lokalen oder ursprungs-reduzierten CAD-System**, in **keinem** realen CRS (Indizien: Block-Name wie `_Kataster-nicht-georef`; kein Kandidaten-EPSG bringt die Geometrie auf den realen Standort).
+
+1. **Lokal bestätigen**: DXF-Extent durch die plausiblen CRS transformieren — landet keiner am Standort, ist es lokal (kein bloßer Offset).
+2. **Über das eingebettete Kataster einpassen**: solche DXF tragen meist ALKIS-Layer (Flurstücke, Gebäude). Mit `gis_utils.register_features()` an das **amtliche ALKIS** des Standorts matchen (Ähnlichkeitstransformation; meist reine **Translation** — Maßstab 1, Rotation 0). Offset speichern, alle Planlayer damit transformieren.
+3. **Über physische Plausibilität auf dem DOP prüfen, nicht nur über Restklaffung** — ein sub-mm-Fit auf eine *fehlplatzierte* Referenz ist trotzdem falsch. Sanity-Check: Liegen Bestandsobjekte richtig? Ist etwas physisch unmöglich (z.B. Baumkrone auf dem Parkplatz)? Eine widersprechende Operator-Beobachtung als Prüf-Anlass nehmen, nicht verwerfen.
+
+### Saubere Footprints extrahieren
+
+- Gefüllte Flächen kommen als **HATCH** durch — diese als Footprint nehmen; offene Linienzüge (Geräte-/Container-Umrisse) mit `polygonize` schließen.
+- **Auf eine Standort-Bbox clippen** — Legenden-/Detail-/Plankopf-Geometrie liegt auf denselben Layern weit weg vom Standort.
+- Mikro-Slivers (< ~0,25 m²) aus Boolean-Ergebnissen filtern (numerische Artefakte); echte kleine Überlagerungen behalten und benennen.
+
 ### Verifikation (immer durchziehen)
 
 Nach Extraktion:

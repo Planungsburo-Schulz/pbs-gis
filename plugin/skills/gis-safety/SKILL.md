@@ -10,15 +10,25 @@ Apply these rules to ALL code written in gis_utils projects.
 
 ### CRITICAL: No dangerous defaults or silent fallbacks
 
-- **CRS**: NEVER default to a specific EPSG code. Different projects use different zones (25832 vs 25833). A wrong CRS silently shifts geometries by hundreds of meters. Always require CRS explicitly.
+- **CRS**: NEVER default to a specific EPSG code. Different projects use different zones (25832 vs 25833). A wrong CRS silently shifts geometries by hundreds of meters. Always require CRS explicitly. For Behörden/authority deliverables the CRS is a **requirement**, not a convenience: resolve the official Landes-CRS for the project's state — the data's current CRS or the geographic UTM zone may differ from what the authority expects (a state can keep one UTM zone across a zone boundary). Take it from the recipe / amtliches ALKIS, not by assumption.
 - **URLs, layer names, file paths**: NEVER hardcode project-specific values as defaults. Require them as parameters or get them from recipes.
 - **Any parameter where a wrong default produces valid-looking but incorrect output**: make it required, not optional with a default.
 - **Safe defaults are OK**: `timeout=120`, `dissolve=True`, `simplify_tolerance=1.0` — wrong values cause obvious failures, not silent corruption.
 - **When in doubt**: require the parameter with no default. An explicit error is always better than silently wrong data.
 
-### Output convention: always single Polygons
+### Output & symbology conventions
 
-When producing GeoDataFrame outputs, always explode MultiPolygons into individual Polygon features (`.explode(index_parts=False)`). MultiPolygons make styling, labeling, and area calculations unreliable in QGIS.
+When producing GeoDataFrame outputs, always explode MultiPolygons into individual Polygon features (`.explode(index_parts=False)`). MultiPolygons make styling, labeling, and area calculations unreliable in QGIS — and a multi-part result gets only one label per feature, leaving disjoint patches unlabelled; exploding gives every patch its own value.
+
+When styling outputs over a basemap (DOP, ALKIS):
+- **One colour = one role.** Reserve one high-contrast colour for the *alert* role — the conflict/result the map exists to show — and use it for nothing else (not the fence, not a boundary).
+- **Distinguish by hue, not by stacked alpha.** Semi-transparent fills let the basemap read through, but several transparent fills of similar hue stacked together turn muddy and unreadable. One role → one hue.
+
+### Validate inputs and outputs — don't assume
+
+- **Layer mapping by geometry, not name**: before using a named layer, confirm it actually holds the expected geometry (type, area, count). Names mislead — a "fence" layer may carry only dimensioning, a "components" layer may be a 0.3 m² stub. Surface any mismatch instead of proceeding.
+- **A success code is not verification**: `rc=0` / "saved" does not mean the output is right. Render it and look — visual review catches muddy symbology, clipped legends, broken-image logos, and off-page scale bars that return codes never report.
+- **Never overwrite source inputs**: the surveyor's DXF, a digitised shapefile, a received plan stay as received. Reproject/convert into *derived* outputs; touch the source only on explicit instruction.
 
 ### Alpha stage — no backward compatibility
 

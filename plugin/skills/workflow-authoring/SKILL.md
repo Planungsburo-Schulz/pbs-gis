@@ -15,6 +15,10 @@ gis-workflow run --dry-run         # preview execution plan
 gis-workflow run --step "Name"     # run single step + dependencies
 ```
 
+### Discovery first, then lock the pipeline
+
+Use ad-hoc scripts only while *discovering* the data (unknown CRS, layer semantics, georeferencing). Once the method is known, move every step into `workflow.yaml` + `scripts/` — then requirement changes (drop a layer, change CRS, add an analysis) become a one-line edit + `gis-workflow run`, not a manual redo.
+
 ### workflow.yaml format
 
 Steps can use **scripts** (Python files) or **templates** (built-in patterns):

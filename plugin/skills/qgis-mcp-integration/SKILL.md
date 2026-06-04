@@ -280,6 +280,10 @@ running — they all gracefully no-op when QGIS is unreachable.
 | `claude mcp list` doesn't show qgis even though `~/.claude/settings.json` has it | Claude Code does not read `mcpServers` from settings.json | Register via `claude mcp add` (writes to `~/.claude.json`) |
 | Tools listed with old schemas after server change | Tool schemas cached per session | Full Claude Code restart — `/reload-plugins` is not enough |
 | `is_available()` True but `reload_paths` returns 0 | No layers in the open QGIS project match the given paths | Either pre-load the layer (`qgis_bridge.add_layer(...)`) or expect this — the bridge does NOT auto-add files |
+| `execute()` / `mcp__qgis__execute_code` returns `{executed, stdout, stderr}` — your `result = {...}` variable is dropped | Current plugin captures stdout/stderr, not a `result` namespace var | `print()` status to stdout; treat the **written output file as the success signal**, not a returned value |
+| Passing `None`/wrong type into a PyQGIS C++ call **crashes the whole QGIS process** (e.g. `QgsMapThemeCollection.createThemeFromCurrentState(root, None)`) | C++ binding, no Python type guard → segfault | Validate args before the call; build it incrementally; never pass `None` where an object is expected |
+| `layerTreeRoot().removeAllChildren()` **deletes the layers from the project**, not just the tree nodes | Layer-tree↔registry bridge drops a layer when its last tree node is removed | Reorder via `root.setCustomLayerOrder([...])`; never `removeAllChildren()` to reorder |
+| Layer renders at the wrong location after you regenerate its file in a different CRS | QGIS caches the layer's declared CRS from first load | `layer.dataProvider().reloadData(); layer.setCrs(new_crs)` after regenerating |
 
 ## Architecture quick-reference
 
