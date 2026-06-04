@@ -197,12 +197,20 @@ def download(
         bbox_sq = _recipe.connection.get("bbox_stored_query")
         if bbox_sq:
             stored_query = bbox_sq["id"]
+            # Some servers (e.g. Thüringen adv_alkis_v2_wfs) prepend the
+            # "urn:ogc:def:crs:EPSG::" prefix themselves and expect the bare
+            # EPSG code; others want the full "EPSG:25833". Controlled per recipe
+            # via bbox_stored_query.crs_param: asis (default) | epsg_code | urn.
+            _crs_fmt = bbox_sq.get("crs_param", "asis")
+            _code = crs.split(":")[-1]
+            _crs_val = {"epsg_code": _code,
+                        "urn": f"urn:ogc:def:crs:EPSG::{_code}"}.get(_crs_fmt, crs)
             stored_query_params = {
                 "x1": str(extent[0]),
                 "y1": str(extent[1]),
                 "x2": str(extent[2]),
                 "y2": str(extent[3]),
-                "CRS": crs,
+                "CRS": _crs_val,
             }
             extent = None  # handled by stored query now
 
@@ -256,9 +264,16 @@ def download(
                 stored_query_params or {},
                 version=version,
             )
+            # A bbox stored query (e.g. adv 'ave-by-bbox') returns *all* feature
+            # types in one GML; select the requested sub-layer by its local name
+            # (namespace-stripped wfs_layer), falling back to the first layer.
+            _want = (layer or "").split(":")[-1]
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", message="Field with same name")
-                gdf = gpd.read_file(sq_url)
+                try:
+                    gdf = gpd.read_file(sq_url, layer=_want) if _want else gpd.read_file(sq_url)
+                except Exception:
+                    gdf = gpd.read_file(sq_url)
         else:
             # Use geopandas OGR WFS driver
             wfs_uri = f"WFS:{url}"

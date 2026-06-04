@@ -96,15 +96,19 @@ def layout_from_qpt(
     resp = qgis_bridge.execute(code)
     if resp is None:
         return False
-    # Check status
-    if isinstance(resp, dict):
-        inner = resp.get("result")
-        if isinstance(inner, dict):
-            ok = bool(inner.get("ok", False))
-            msg = inner.get("msg", "")
-            if msg:
-                print(f"  {msg}")
-            return ok
+    inner = resp.get("result") if isinstance(resp, dict) else None
+    if isinstance(inner, dict):
+        # Surface console output. Legacy qgis-mcp returned a ``result`` dict with
+        # ok/msg; the current plugin returns {executed, stdout, stderr} and drops
+        # the ``result`` variable — so file-existence is the success signal.
+        for _k in ("stdout", "stderr"):
+            _v = inner.get(_k)
+            if _v and str(_v).strip():
+                print("  " + str(_v).strip().replace("\n", "\n  "))
+        if "ok" in inner:  # legacy protocol
+            if inner.get("msg"):
+                print(f"  {inner['msg']}")
+            return bool(inner["ok"])
     return out.is_file()
 
 
@@ -123,7 +127,7 @@ def _build_pyqgis_code(
 
     return f"""
 from qgis.core import (
-    QgsLayout, QgsReadWriteContext, QgsProject, QgsLayoutItemMap,
+    QgsPrintLayout, QgsReadWriteContext, QgsProject, QgsLayoutItemMap,
     QgsLayoutItemLabel, QgsRectangle, QgsLayoutExporter,
 )
 from qgis.PyQt.QtXml import QDomDocument
@@ -145,8 +149,11 @@ try:
         _xml = _f.read()
     _doc = QDomDocument()
     _doc.setContent(_xml)
-    _layout = QgsLayout(QgsProject.instance())
-    if not _layout.loadFromTemplate(_doc, QgsReadWriteContext()):
+    _layout = QgsPrintLayout(QgsProject.instance())
+    # PyQGIS returns (items, ok); only a hard failure raises below
+    _loaded = _layout.loadFromTemplate(_doc, QgsReadWriteContext())
+    _ok_load = _loaded[1] if isinstance(_loaded, tuple) else bool(_loaded)
+    if not _ok_load:
         raise RuntimeError("loadFromTemplate failed")
     _layout.setName(_layout_name)
 
@@ -228,8 +235,12 @@ try:
     _ok = True
     _msg.insert(0, f"  Layout exported: {{_out}}")
 
-except Exception as _e:
-    _msg.append(f"  [ERROR] {{_e}}")
+except Exception:
+    import traceback as _tb
+    _msg.append("  [ERROR] " + _tb.format_exc())
 
+# print so the message survives plugins that only return stdout/stderr;
+# keep ``result`` for the legacy qgis-mcp protocol
+print("\\n".join(_msg))
 result = {{"ok": _ok, "msg": "\\n".join(_msg)}}
 """

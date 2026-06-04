@@ -19,6 +19,7 @@ _MODULES = [
     "gis_utils.geometry",  # geometry utilities
     "gis_utils.reporting", # area reports, markdown tables
     "gis_utils.alkis",     # Flurstück lookup
+    "gis_utils.georef",    # feature-match georeferencing (DXF/local -> reference CRS)
     "gis_utils.dxf.extract",   # DXF extraction
     "gis_utils.dxf.convert",   # SHP→DXF conversion
     "gis_utils.dxf.document",  # DXF document creation

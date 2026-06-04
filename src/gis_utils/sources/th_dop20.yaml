@@ -1,0 +1,14 @@
+name: th_dop20
+description: "TH DOP20 — Digitale Orthophotos Thüringen 20cm Bodenauflösung, Echtfarben (RGB). Amtlich, Geoproxy Thüringen (TLBG). © GDI-Th."
+tags: [dop, orthophoto, luftbild, aerial, rgb, TH, thüringen, open-data]
+
+connection:
+  type: wms
+  url: "https://www.geoproxy.geoportal-th.de/geoproxy/services/DOP20"
+  layer: "th_dop"
+  crs: "EPSG:25833"
+
+detection:
+  mode: areas
+  area_background: alpha
+  download_only: true

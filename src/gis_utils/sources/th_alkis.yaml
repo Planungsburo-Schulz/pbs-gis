@@ -1,0 +1,71 @@
+name: th_alkis
+description: "ALKIS Thüringen (vereinfacht, adv-Produkt ave 2.0) — Flurstücke, Katasterbezirke, Verwaltungseinheiten, Gebäude, Nutzungen. Geoproxy Thüringen (TLBG). Dienst gibt Geometrie in EPSG:25832 zurück; der bbox-StoredQuery erwartet den blanken EPSG-Code als CRS-Parameter."
+tags: [ALKIS, kataster, amtlich, TH, thüringen, flurstück, gemarkung, gemeinde, gebäude, nutzung, vereinfacht]
+
+connection:
+  type: wfs
+  url: "https://www.geoproxy.geoportal-th.de/geoproxy/services/adv_alkis_v2_wfs"
+  version: "2.0.0"
+  crs: "EPSG:25832"
+  # This WFS only exposes stored queries (no ad-hoc bbox GetFeature).
+  # The 'ave-by-bbox' query expects the bare EPSG code (it prepends the URN itself).
+  bbox_stored_query:
+    id: "http://repository.gdi-de.org/query/adv/produkt/alkis-vereinfacht/2.0/ave-by-bbox"
+    params: {x1: minx, y1: miny, x2: maxx, y2: maxy, CRS: crs}
+    crs_param: epsg_code
+
+layers:
+  flurstuecke:
+    wfs_layer: "ave:Flurstueck"
+    title: "Flurstücke"
+    tags: [flurstück, parcel, grundstück]
+    query_fields:
+      gemarkung: gemarkung
+      gemarkung_schluessel: gemaschl
+      gemeinde: gemeinde
+      gemeinde_schluessel: gmdschl
+      flur: flur
+      flur_schluessel: flurschl
+      zaehler: flstnrzae
+      nenner: flstnrnen
+      kennzeichen: flstkennz
+      kreis: kreis
+      kreis_schluessel: kreisschl
+    stored_queries:
+      by_gemarkung:
+        id: "http://repository.gdi-de.org/query/adv/produkt/alkis-vereinfacht/2.0/flst-by-gemarkung"
+        param_field: kennzeichen
+        source_field: gemaschl
+      by_kennzeichen:
+        id: "http://repository.gdi-de.org/query/adv/produkt/alkis-vereinfacht/2.0/flst-by-kennzeichen"
+        param_field: kennzeichen
+        source_field: flstkennz
+    column_mapping:
+      flstkennz: kennzeichen
+      flaeche: flaeche_m2
+      lagebeztxt: lagebezeichnung
+
+  katasterbezirk:
+    wfs_layer: "ave:KatasterBezirk"
+    title: "Katasterbezirke (Gemarkungen und Flure)"
+    tags: [gemarkung, flur, katasterbezirk]
+
+  verwaltungseinheit:
+    wfs_layer: "ave:VerwaltungsEinheit"
+    title: "Verwaltungseinheiten (Gemeinden, Kreise, etc.)"
+    tags: [gemeinde, kreis, verwaltung]
+
+  gebaeude:
+    wfs_layer: "ave:GebaeudeBauwerk"
+    title: "Gebäude und Bauwerke"
+    tags: [gebäude, building, bauwerk]
+
+  nutzung:
+    wfs_layer: "ave:Nutzung"
+    title: "Tatsächliche Nutzung"
+    tags: [nutzung, landuse, bodennutzung]
+
+  nutzung_flurstueck:
+    wfs_layer: "ave:NutzungFlurstueck"
+    title: "Nutzungen je Flurstück"
+    tags: [nutzung, flurstück]

@@ -5,3 +5,7 @@ sh:
 mv:
   recipe: mv_alkis_vereinf
   layer: flurstuecke
+
+th:
+  recipe: th_alkis
+  layer: flurstuecke
