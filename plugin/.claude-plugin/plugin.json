@@ -1,6 +1,6 @@
 {
   "name": "gis-utils",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "MCP tools for discovering gis_utils API, recipes, and templates, plus safety skills for GIS/CAD development.",
   "author": {
     "name": "Gunther Schulz"

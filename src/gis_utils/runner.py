@@ -110,7 +110,8 @@ def should_skip(step: dict, project_dir: Path) -> bool:
 
     Skip only if all outputs exist AND no declared input is newer than the
     oldest output (make-style staleness). Inputs are taken from ``inputs:``
-    (any step) plus, for recipe steps, ``input_boundary:`` (the scope file).
+    (any step), the step's own ``script:`` (so a code edit re-runs it), plus,
+    for recipe steps, ``input_boundary:`` (the scope file).
     Declaring a step's real input files — including upstream steps' outputs —
     lets a single ``gis-workflow run`` re-run the step, and cascade downstream,
     when the data changes, instead of skipping on mere output existence.
@@ -128,6 +129,10 @@ def should_skip(step: dict, project_dir: Path) -> bool:
     oldest_output = min(p.stat().st_mtime for p in output_paths)
 
     declared_inputs = list(step.get("inputs", []))
+    # A step depends on its own script (make-style: target depends on its recipe),
+    # so editing the script re-runs the step and cascades downstream.
+    if step.get("script"):
+        declared_inputs.append(step["script"])
     # Recipe scope file behaves as an input too (back-compat).
     input_boundary = step.get("input_boundary")
     if input_boundary and step.get("recipe"):

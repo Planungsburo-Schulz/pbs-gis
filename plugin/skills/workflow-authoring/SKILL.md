@@ -52,7 +52,7 @@ Steps can use **scripts** (Python files) or **templates** (built-in patterns):
 
 **Step execution rules:**
 - `run: auto` (default) — skipped if outputs exist and are up-to-date
-- `inputs:` — files the step reads (incl. upstream steps' outputs). Under `run: auto` the step re-runs when any input is newer than its outputs (make-style staleness), and re-runs cascade downstream in one `gis-workflow run`. Declare a step's real inputs so a data edit + `gis-workflow run` regenerates everything; without it, `auto` skips whenever outputs merely exist — so an edited input (e.g. a re-digitized shapefile) is silently ignored.
+- `inputs:` — files the step reads (incl. upstream steps' outputs). Under `run: auto` the step re-runs when any input is newer than its outputs (make-style staleness), and re-runs cascade downstream in one `gis-workflow run`. The step's own `script:` is an implicit input — editing the code re-runs the step automatically. Declare a step's real *data* inputs so a data edit + `gis-workflow run` regenerates everything; without it, `auto` skips whenever outputs merely exist — so an edited input (e.g. a re-digitized shapefile) is silently ignored.
 - `run: always` — executes every time
 - Dependencies resolved automatically (topological sort)
 
