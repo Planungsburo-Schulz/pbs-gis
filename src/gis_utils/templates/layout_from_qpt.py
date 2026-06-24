@@ -31,6 +31,7 @@ Example workflow.yaml::
           source: "Quelle: ATKIS Basis-DLM, ALKIS, eigene Erhebung"
         map:
           id: main_map
+          theme: "Wölzow_Übersicht"   # PBS convention: map follows this map theme
           layers: ["Modulflächen", "BAB-Pufferzonen", "Projektfläche"]
           extent_from_layer: "Projektfläche"
           buffer_m: 200
@@ -181,7 +182,17 @@ try:
         if not isinstance(_map, QgsLayoutItemMap):
             raise RuntimeError(f"Map item id '{{_map_id}}' not found / wrong type in template")
 
-        # Layer selection (by name)
+        # Theme-follow (PBS convention): drive map visibility from a named
+        # map theme so canvas edits never change the exported layout.
+        _theme = _map_cfg.get("theme")
+        if _theme:
+            _map.setFollowVisibilityPreset(True)
+            _map.setFollowVisibilityPresetName(_theme)
+        else:
+            _msg.append("  [warn] map.theme not set — layout map follows explicit "
+                        "layers / canvas, not a map theme (PBS convention)")
+
+        # Layer selection (by name) — seeds the legend; theme drives visibility
         _layer_names = _map_cfg.get("layers") or []
         if _layer_names:
             _layers = []

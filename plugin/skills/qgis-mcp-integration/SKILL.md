@@ -215,6 +215,7 @@ For deterministic Lageplan-PDFs:
       subtitle: "B-Plan Nr. 25-01, Stand Mai 2026"
     map:
       id: main_map
+      theme: "Wölzow_Übersicht"      # map item follows this map theme (PBS convention)
       layers: ["Modulflächen", "BAB-Pufferzonen"]
       extent_from_layer: "Projektfläche"
       buffer_m: 200
@@ -222,6 +223,8 @@ For deterministic Lageplan-PDFs:
     dpi: 300
   output: Output/Karten/Lageplan_A3.pdf
 ```
+
+The layout map must **follow a map theme**, not the live canvas — pre-build it with `qgis_bridge.define_map_theme(name, visible_layers)`. Same rule for the YAML-driven `render_layout_template(..., map_theme=...)` and for hand-rolled PyQGIS layouts. See `gis-safety` → "Print layouts" and the `layout-from-template` skill.
 
 To create the `.qpt`: build the layout once in QGIS (Page Setup,
 schriftfeld, logo, legend, scale bar, north arrow), assign meaningful

@@ -32,23 +32,11 @@ If the AOI layer has multiple overlapping features: dissolve to a single non-ove
 
 #### 2. Map theme
 
+Build the theme with the helper — idempotent, layers matched by name, every other layer hidden. Never hand-roll `createThemeFromCurrentState(root, None)`: a `None` model segfaults QGIS.
+
 ```python
-from qgis.core import QgsProject, QgsMapThemeCollection
-from qgis.utils import iface
-
-p = QgsProject.instance()
-root = p.layerTreeRoot()
-
-# Set canvas visibility to the desired state (visible/hidden per layer)
-# ...
-
-# Capture current state as a theme
-model = iface.layerTreeView().layerTreeModel()
-record = QgsMapThemeCollection.createThemeFromCurrentState(root, model)
-mtc = p.mapThemeCollection()
-if theme_name in mtc.mapThemes():
-    mtc.removeMapTheme(theme_name)  # idempotent
-mtc.insert(theme_name, record)
+from gis_utils import qgis_bridge
+qgis_bridge.define_map_theme(theme_name, ["Vorhabensfläche", "Grundstück", "DOP20"])
 ```
 
 #### 3. Placeholder substitution + load layout

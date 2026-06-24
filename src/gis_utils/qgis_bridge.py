@@ -513,6 +513,77 @@ def _compose_layout_values(
     return values, logo_path
 
 
+def define_map_theme(
+    name: str,
+    visible_layers: Iterable[str],
+    *,
+    host: str = DEFAULT_HOST,
+    port: int = DEFAULT_PORT,
+) -> bool:
+    """Create (or update) a QGIS **map theme** from a set of visible layers.
+
+    A map theme is the PBS single-source-of-truth for "what a given map
+    shows": which layers are visible and with which style. Print layouts
+    then *follow* the theme (see ``map_theme=`` on
+    :func:`render_layout_template` / the ``layout_from_qpt`` template's
+    ``map.theme``), so editing the live canvas never silently changes an
+    exported layout.
+
+    Layers are matched by **name first, then id**; every project layer not
+    listed is hidden in the theme. Idempotent — re-running updates the
+    theme in place.
+
+    Args:
+        name: Map theme name (convention: ``<Project>_<Map-Type>`` or simply
+            the layout name).
+        visible_layers: Layer names (or ids) that should be visible in the
+            theme. Everything else in the project is hidden.
+
+    Returns ``True`` on success, ``False`` if QGIS is unreachable.
+
+    Note: this builds a valid ``QgsLayerTreeModel`` before calling
+    ``createThemeFromCurrentState`` — passing ``None`` there crashes the
+    whole QGIS process, so never hand-roll that call without the model.
+    """
+    visible = list(visible_layers)
+    code = (
+        "from qgis.core import (QgsProject, QgsMapThemeCollection,\n"
+        "    QgsLayerTreeModel)\n"
+        f"_name = {name!r}\n"
+        f"_visible = set({visible!r})\n"
+        "_proj = QgsProject.instance()\n"
+        "_root = _proj.layerTreeRoot()\n"
+        "for _lyr in _proj.mapLayers().values():\n"
+        "    _node = _root.findLayer(_lyr.id())\n"
+        "    if _node is None:\n"
+        "        continue\n"
+        "    _node.setItemVisibilityChecked(_lyr.name() in _visible or _lyr.id() in _visible)\n"
+        "_model = QgsLayerTreeModel(_root)\n"
+        "_record = QgsMapThemeCollection.createThemeFromCurrentState(_root, _model)\n"
+        "_coll = _proj.mapThemeCollection()\n"
+        "if _coll.hasMapTheme(_name):\n"
+        "    _coll.update(_name, _record)\n"
+        "else:\n"
+        "    _coll.insert(_name, _record)\n"
+        "result = {'ok': True, 'theme': _name, 'themes': _coll.mapThemes()}\n"
+    )
+    client = _connect(host, port)
+    if client is None:
+        return False
+    try:
+        client.execute_code(code)
+        print(f"[qgis_bridge] map theme {name!r} ← {len(visible)} visible layer(s)")
+        return True
+    except Exception as exc:
+        print(f"[qgis_bridge] define_map_theme failed: {exc}")
+        return False
+    finally:
+        try:
+            client.disconnect()
+        except Exception:
+            pass
+
+
 def render_layout_template(
     template_path: str | Path,
     *,
@@ -521,6 +592,7 @@ def render_layout_template(
     output_pdf: str | Path | None = None,
     output_png: str | Path | None = None,
     layout_name: str | None = None,
+    map_theme: str | None = None,
     freeze_bearbeitungsstand: bool = False,
     extent_from_canvas: bool = True,
     dpi: int = 300,
@@ -550,6 +622,14 @@ def render_layout_template(
         layout_name: Layout name in the QGIS layout manager. Defaults to
             the template's embedded name. Replaces a same-named layout if
             it already exists in the project.
+        map_theme: Name of a QGIS map theme the ``main_map`` item should
+            **follow** (``setFollowVisibilityPreset``). This is the PBS
+            convention: a layout's map visibility is driven by a named map
+            theme, NOT by the live canvas — so canvas edits never silently
+            change an exported layout. Define the theme first (see
+            :func:`define_map_theme`). When omitted, the map follows the
+            current canvas state (legacy behaviour) and an advisory is
+            printed.
         freeze_bearbeitungsstand: If True, replaces the ``{{bearbeitungsstand}}``
             placeholder with today's literal date instead of the live
             QGIS now() expression. Useful for archival exports.
@@ -565,6 +645,12 @@ def render_layout_template(
     if not tpath.is_file():
         print(f"[qgis_bridge] template not found: {tpath}")
         return False
+
+    if not map_theme:
+        print("[qgis_bridge] render_layout_template: no map_theme set — the layout "
+              "map will follow the LIVE CANVAS state. PBS convention is to drive "
+              "layout maps from a named map theme (define_map_theme(...) + "
+              "map_theme=...) so canvas edits never change an exported layout.")
 
     values, logo_path = _compose_layout_values(
         auftragnehmer_yaml, project_yaml, freeze_bearbeitungsstand,
@@ -584,6 +670,7 @@ def render_layout_template(
         f"_layout_name = {layout_name!r}\n"
         f"_values = {values!r}\n"
         f"_logo_path = {logo!r}\n"
+        f"_map_theme = {(map_theme or '')!r}\n"
         f"_extent_from_canvas = {bool(extent_from_canvas)!r}\n"
         f"_out_pdf = {out_pdf!r}\n"
         f"_out_png = {out_png!r}\n"
@@ -620,8 +707,12 @@ def render_layout_template(
         "        _logo_item.setPicturePath(_logo_path)\n"
         "    _map = _layout.itemById('main_map')\n"
         "    if isinstance(_map, QgsLayoutItemMap):\n"
-        "        _map.setFollowVisibilityPreset(False)\n"
-        "        _map.setKeepLayerSet(False)\n"
+        "        if _map_theme:\n"
+        "            _map.setFollowVisibilityPreset(True)\n"
+        "            _map.setFollowVisibilityPresetName(_map_theme)\n"
+        "        else:\n"
+        "            _map.setFollowVisibilityPreset(False)\n"
+        "            _map.setKeepLayerSet(False)\n"
         "        if _extent_from_canvas:\n"
         "            _map.zoomToExtent(iface.mapCanvas().extent())\n"
         "    _mgr.addLayout(_layout)\n"
