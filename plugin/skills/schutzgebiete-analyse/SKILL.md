@@ -39,22 +39,22 @@ Wiederkehrender Task: für ein Projekt die relevanten Schutzgebiete in der Umgeb
     - nsg_bestand
     - biotopverbund
     - wsg_aussengrenze
-  input_boundary: Shape/Projektfläche.shp
+  input_boundary: Geodaten/Projektfläche.gpkg
   buffer_m: 2000                            # Suchradius
   crs: "EPSG:25832"
-  output_dir: Shape/Schutzgebiete
+  output_dir: Geodaten/Schutzgebiete
 
 - name: Distanzlinien zu Schutzgebieten
   template: distance_lines_to_nearest
   params:
-    target: Shape/Projektfläche.shp
+    target: Geodaten/Projektfläche.gpkg
     references:
-      - {file: Shape/Schutzgebiete/ffh_gebiete.gpkg, name_col: gebietsnam, type: "FFH-Gebiet"}
-      - {file: Shape/Schutzgebiete/spa_gebiete.gpkg, name_col: gebietsnam, type: "SPA-Gebiet"}
-      - {file: Shape/Schutzgebiete/nsg_bestand.gpkg, name_col: name, type: "NSG"}
-      - {file: Shape/Schutzgebiete/biotopverbund.gpkg, name_col: name, type: "Biotopverbund"}
+      - {file: Geodaten/Schutzgebiete/ffh_gebiete.gpkg, name_col: gebietsnam, type: "FFH-Gebiet"}
+      - {file: Geodaten/Schutzgebiete/spa_gebiete.gpkg, name_col: gebietsnam, type: "SPA-Gebiet"}
+      - {file: Geodaten/Schutzgebiete/nsg_bestand.gpkg, name_col: name, type: "NSG"}
+      - {file: Geodaten/Schutzgebiete/biotopverbund.gpkg, name_col: name, type: "Biotopverbund"}
     crs: "EPSG:25832"
-  output: Shape/schutzgebiete_distanzen.gpkg
+  output: Geodaten/schutzgebiete_distanzen.gpkg
 ```
 
 Plus optional ein project-side Skript `scripts/schutzgebiete_report.py` für die Tabelle (Distanz, Überlappung, Flächenangaben).

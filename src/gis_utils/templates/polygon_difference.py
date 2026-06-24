@@ -9,7 +9,7 @@ Single overlay::
     - name: Build Reptilienschutzzaun
       template: polygon_difference
       params:
-        input: Geodaten/Flurstück for Reptilienschutzzaun.shp
+        input: Geodaten/Flurstück for Reptilienschutzzaun.gpkg
         overlay: Geodaten/Remove from Reptilienschutzzaun.gpkg
         crs: "EPSG:25833"
       output: Geodaten/Reptilienschutzzaun.gpkg

@@ -13,7 +13,7 @@ Example workflow.yaml::
     - name: WEA 15x Höhe Buffer
       template: point_buffer_union
       params:
-        input: GIS/Local Shape/WKA.gpkg
+        input: Geodaten/WKA.gpkg
         crs: "EPSG:25832"
         buffer_col: HOEHE_M
         buffer_factor: 15

@@ -18,14 +18,14 @@ Two source modes
     - name: BAB Pufferzonen Wölzow
       template: buffer_zones
       params:
-        source: Shape/A24_Verkehrsflaeche.shp
+        source: Geodaten/A24_Verkehrsflaeche.gpkg
         crs: "EPSG:25833"
         zones:
           - {name: "0-110m", outer_m: 110}
           - {name: "110-200m", inner_m: 110, outer_m: 200}
-        target: Shape/Projektfläche.shp        # optional
+        target: Geodaten/Projektfläche.gpkg        # optional
         report_csv: area_by_bab_zone.csv       # optional
-      output: Shape/bab_pufferzonen.gpkg
+      output: Geodaten/bab_pufferzonen.gpkg
 
 **Mode B — line source + measured / regulatory extension.**  Use the road
 axis (e.g. ATKIS ``AX_Strassenachse``) plus the half-width to the legal
@@ -36,7 +36,7 @@ the right path when the polygon data underestimates the real surface
 visible road)::
 
     params:
-      source: Shape/A24_Mittellinie.shp
+      source: Geodaten/A24_Mittellinie.gpkg
       crs: "EPSG:25833"
       source_extend_m: 9.5     # measured DOP distance Mittellinie → Fahrbahnkante
       # OR (alternative if the value isn't measured):

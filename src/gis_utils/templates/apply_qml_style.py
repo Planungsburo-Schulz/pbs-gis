@@ -11,7 +11,7 @@ running (or the ``[qgis]`` extra is not installed), the template is a
 silent no-op and the workflow proceeds normally.
 
 The runner already auto-applies *sibling* ``.qml`` files (e.g.
-``Shape/foo.shp`` + ``Shape/foo.qml``) when ``qgis_open`` /
+``Geodaten/foo.gpkg`` + ``Geodaten/foo.qml``) when ``qgis_open`` /
 ``GIS_WORKFLOW_QGIS_OPEN`` is active.  Use this template explicitly
 when:
 
@@ -25,7 +25,7 @@ Example workflow.yaml::
     - name: Pufferzonen stylen
       template: apply_qml_style
       params:
-        layer: Shape/bab_pufferzonen.gpkg
+        layer: Geodaten/bab_pufferzonen.gpkg
         qml: ~/dev/Gunther-Schulz/PBS-Templates/styles/bab_pufferzonen.qml
 """
 

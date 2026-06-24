@@ -165,8 +165,8 @@ GIS_WORKFLOW_QGIS_OPEN=1 gis-workflow run    # globally
 
 Vector vs raster is auto-detected by file extension.
 
-**Sibling QML auto-applied**: if `Shape/foo.shp` has a sibling
-`Shape/foo.qml`, the runner applies it on add/reload.  Convention over
+**Sibling QML auto-applied**: if `Geodaten/foo.gpkg` has a sibling
+`Geodaten/foo.qml`, the runner applies it on add/reload.  Convention over
 configuration — drop a QML next to a generated layer and it just works.
 
 Recommended for live development:
@@ -196,7 +196,7 @@ styles directory), use the `apply_qml_style` template:
 - name: Pufferzonen stylen
   template: apply_qml_style
   params:
-    layer: Shape/bab_pufferzonen.gpkg
+    layer: Geodaten/bab_pufferzonen.gpkg
     qml: ~/dev/Gunther-Schulz/PBS-Templates/styles/bab_pufferzonen.qml
 ```
 
@@ -237,16 +237,16 @@ Save as Template.
 from gis_utils import qgis_bridge
 
 # Generate file ...
-gdf.to_file("Shape/MyResult.gpkg", driver="GPKG")
+gdf.to_file("Geodaten/MyResult.gpkg", driver="GPKG")
 
 # Reload existing matching layers (no-op if QGIS not running)
-qgis_bridge.reload_paths(["Shape/MyResult.gpkg"])
+qgis_bridge.reload_paths(["Geodaten/MyResult.gpkg"])
 
 # Or add as a new layer (auto-detects vector/raster, idempotent)
-qgis_bridge.open_path("Shape/MyResult.gpkg", name="My Result")
+qgis_bridge.open_path("Geodaten/MyResult.gpkg", name="My Result")
 
 # Apply a QML style
-qgis_bridge.apply_qml("Shape/MyResult.gpkg", "styles/result.qml")
+qgis_bridge.apply_qml("Geodaten/MyResult.gpkg", "styles/result.qml")
 
 # Take a canvas screenshot
 qgis_bridge.take_canvas_screenshot("Output/preview.png")

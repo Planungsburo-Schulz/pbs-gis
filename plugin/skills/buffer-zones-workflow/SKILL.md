@@ -23,7 +23,7 @@ This skill captures the workflow + decision tree so we don't re-derive it each t
    - User may want different bands
 
 3. **Project layers for breakdown** → which target(s)?
-   - Minimum: `Projektfläche.shp` for the §35-required total
+   - Minimum: `Projektfläche.gpkg` for the §35-required total
    - Often also: `Modulflächen.shp`, `Wege.shp`, sometimes `Baufeld Umgrenzung.shp`, `Ausgleichsfläche.shp`
    - Multi-layer breakdown → use a project-side script (not the template's single-target intersection)
 
@@ -55,16 +55,16 @@ This skill captures the workflow + decision tree so we don't re-derive it each t
   filter:
     widmung: "1301"
     bezeichnung: A24
-  input_boundary: Shape/Projektfläche.shp
+  input_boundary: Geodaten/Projektfläche.gpkg
   crs: "EPSG:25833"
-  output_dir: Shape/ATKIS
+  output_dir: Geodaten/ATKIS
   outputs:
-    - Shape/ATKIS/strassenachse.gpkg
+    - Geodaten/ATKIS/strassenachse.gpkg
 
 - name: <Infrastruktur>-Pufferzonen
   template: buffer_zones
   params:
-    source: Shape/ATKIS/strassenachse.gpkg
+    source: Geodaten/ATKIS/strassenachse.gpkg
     crs: "EPSG:25833"
     source_extend_m: 9.5      # measured OR RAA-2008 RQ derivation (see below)
     # Alternative if no measurement:
@@ -73,9 +73,9 @@ This skill captures the workflow + decision tree so we don't re-derive it each t
     zones:
       - {name: "0-110m", outer_m: 110}
       - {name: "110-200m", inner_m: 110, outer_m: 200}
-    target: Shape/Projektfläche.shp
+    target: Geodaten/Projektfläche.gpkg
     report_csv: area_by_<infra>_zone.csv
-  output: Shape/<infra>_pufferzonen.gpkg
+  output: Geodaten/<infra>_pufferzonen.gpkg
 ```
 
 For multi-layer breakdown (Modulflächen × Zone, Wege × Zone, etc.), add a project-side script `scripts/calculate_areas_by_zone.py` reading the zones GPKG and intersecting with each layer.
@@ -101,8 +101,8 @@ Formula (BAB only): `2.0 m + N × 3.75 m` where N = lanes per direction.  Half-M
 ### User-side verification (always prompt for this)
 
 After implementation, ask user to load in QGIS on DOP background:
-- `Shape/ATKIS/strassenachse.gpkg` — should sit in the middle of the visible BAB
-- `Shape/<infra>_pufferzonen.gpkg` Layer `zones` — inner edge should sit on the **white Fahrbahnbegrenzungslinie** (lane edge), NOT at the visible road outer edge
+- `Geodaten/ATKIS/strassenachse.gpkg` — should sit in the middle of the visible BAB
+- `Geodaten/<infra>_pufferzonen.gpkg` Layer `zones` — inner edge should sit on the **white Fahrbahnbegrenzungslinie** (lane edge), NOT at the visible road outer edge
 
 If inner edge is visibly wrong → adjust `source_extend_m`.
 

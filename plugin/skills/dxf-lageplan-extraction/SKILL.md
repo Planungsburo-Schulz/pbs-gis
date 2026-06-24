@@ -4,7 +4,7 @@ description: This skill should be used when the user asks to "DXF einlesen", "La
 license: MIT
 ---
 
-## DXF-Lageplan zu Shape/GeoPackage Extraktion
+## DXF-Lageplan zu GeoPackage-Extraktion
 
 Erster Schritt fast jedes PBS-Projekts: AutoCAD-Lageplan vom Vermesser/Architekt liegt als `.dxf` vor und einzelne Layer (Baufeld, Modulflächen, Wege, Zaun, Vegetation, Gewässer, …) sollen als georeferenzierte Vektor-Shapes weiterverarbeitet werden.
 
@@ -47,7 +47,7 @@ Erster Schritt fast jedes PBS-Projekts: AutoCAD-Lageplan vom Vermesser/Architekt
     layers: ["Baufeld Umgrenzung", "Modulflächen", "Wege"]
     crs: "EPSG:25833"
     strip_zone: false
-  output_dir: Shape/dxf_extract
+  output_dir: Geodaten/dxf_extract
 ```
 
 **Weg 2 — Template `dxf_lines_to_polygon` (wenn Layer als Polylinien vorliegen die zusammengefügt werden müssen)**:
@@ -60,7 +60,7 @@ Erster Schritt fast jedes PBS-Projekts: AutoCAD-Lageplan vom Vermesser/Architekt
     crs: "EPSG:25833"
     extend: 5.0           # erweitere Linien um max 5m für Lückenschluss
     snap_tolerance: 0.5   # snap Endpunkte mit Abstand <0.5m
-  output: Shape/Baufeld.gpkg
+  output: Geodaten/Baufeld.gpkg
 ```
 
 **Weg 3 — Project-Skript** (wenn projektspezifische Logik dazukommt: Offset, Differenz-Berechnungen, Ableitungen wie Wege = Baufeld − Modulflächen):
