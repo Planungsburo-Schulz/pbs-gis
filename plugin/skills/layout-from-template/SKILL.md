@@ -160,11 +160,45 @@ exporter.exportToImage(base + '.png', png_settings)
 
 **Default export path: `<project>/Export/<layout_name>.{pdf,png}`** — a sibling to `Geodaten/`, `Grundlagen/`, etc. Always show the user the rendered preview before declaring done.
 
+### Hausstil-Kontrakt (apply on every map)
+
+The `.qpt` pins the starting geometry and placeholders but not the visual conventions below. Apply them so a new map matches the existing corpus instead of drifting to generic cartographic defaults.
+
+**Flächenrollen — fill vs. hatch vs. outline.** Decide by one test: *is the area's interior the message, or must the ground under it stay visible?* Apply the matching role QML from `Allgemein/PBS-Templates/styles/` (via `qgis_bridge.apply_qml(layer, qml)`), then recolour the symbol per layer:
+
+| Role QML | Use when |
+|---|---|
+| `grenze_umriss.qml` | Geometry is a **boundary, distance or radius** — interior is not the message (Prüfradien, Teilflächen-Abgrenzung, Vorhabensgebiet, Distanzlinien). |
+| `kategorie_flaeche.qml` | The area **is** a category, ground beneath irrelevant (Modulflächen, Ausgleichsfläche, Wege, Biotoptypen). |
+| `wirkzone_schraffur.qml` | Area **designation/zone laid over meaningful ground** you must still see through (Vorhabensfläche über Gebäuden, Überschwenkbereich, Meide-/Kulissenzone über Acker). |
+
+**Colour: one family per role, shade within it.** Pick the layer's colour from the house palette in `Allgemein/PBS-Templates/styles/` (`README.md` + `palette-reference.html`) — grün = ökologisch positiv, pink/magenta = Modul-/Vorhabensfläche, sand/braun = Wege, **rot only as line/outline, never a fill**. Sub-categories take different shades of the same family, not new hues. The muting comes from the ~43 % fill alpha over the aerial, not from a pale base colour.
+
+**Template item width is the invariant; height and position flex.** Keep each template item's width (`title`, `legend`, `info_block`, `scalebar`) — the shared info-column width is what holds the layout aligned. Height and vertical position may change to fit content: the legend shrinks to its content, a `legend_note` block reflows directly under it, the title box grows downward for a longer title. A **changed width** is the drift signal, not a taller or shifted item. Exceptions exist (a deliberately wider block), but they are a conscious choice, never incidental.
+
+**Title stays one conceptual line.** `{{title}}` (h3) carries the map's subject in one line; species names, method qualifiers and citations go to `{{project_name}}` (h4 subtitle). Do not let a long title force a taller title box.
+
+**Area/distance labels: black, bold, white buffer** — never a coloured label. Set via layer labelling on the label field:
+```python
+from qgis.core import QgsTextFormat, QgsTextBufferSettings, QgsPalLayerSettings, QgsVectorLayerSimpleLabeling
+from qgis.PyQt.QtGui import QFont, QColor
+fmt = QgsTextFormat(); f = QFont(); f.setBold(True); fmt.setFont(f); fmt.setSize(9); fmt.setColor(QColor(0,0,0))
+buf = QgsTextBufferSettings(); buf.setEnabled(True); buf.setSize(1.0); buf.setColor(QColor(255,255,255)); fmt.setBuffer(buf)
+pal = QgsPalLayerSettings(); pal.fieldName = 'flaeche_label'; pal.setFormat(fmt)
+layer.setLabeling(QgsVectorLayerSimpleLabeling(pal)); layer.setLabelsEnabled(True)
+```
+
+**Legend holds only symbol+label entries, optionally under sub-headings** (e.g. `Teilflächen nach LEP`, `Planung`). Explanatory prose (reference-line notes, methodology, distance rationale) never goes inside the legend — it goes in a **separate framed label styled like the legend**, placed directly below it (a `legend_note`). When the legend grows large, it may move to the **left** margin (mirrors the info column) — both placements exist in the corpus.
+
+**Auftraggeber always carries the full postal address** (see clarification 6) — ask for it if the user gave only a name; never print a bare organisation name.
+
+**Reference-check before declaring done.** Open one prior project's export from a sibling `Export/` (or `Ausgabe/`, `Output/Karten/`) directory and compare against it: title-box size, legend font/box, label colour+buffer, area-role choice, info-block address. State which reference you compared and each element's verdict. A map that was never diffed against the corpus has not met the house style.
+
 ### Per-project tuning the user does (NOT in skill scope)
 
 These are judgement calls — propose if asked, but don't auto-apply:
 
-- Cartographic styling (hatch / dash / colour per layer)
+- Symbol **colour** per layer, and fine-tuning within a chosen role (the fill/hatch/outline *role* itself is fixed by the Hausstil-Kontrakt above; only colour and exact hatch spacing/opacity are per-layer)
 - Final legend curation (which entries to drop, reorder, rename)
 - Final positioning of info_block / legend / scale bar after content is in
 - Title-box background colour when map is full-bleed
