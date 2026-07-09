@@ -273,6 +273,9 @@ def add_wms_layer(
     no-op (returns True). Identity tracked via a custom layer property
     ``gis_utils/wms_id``.
 
+    The layer is inserted at the *bottom* of the layer tree — WMS layers are
+    basemaps (TK, DOP, …) and always sit under the data layers.
+
     Returns ``True`` if the layer was added (or already present), ``False``
     if QGIS is not reachable or the layer could not be constructed.
     """
@@ -337,7 +340,9 @@ def add_wms_layer(
         "            _layer.setScaleBasedVisibility(True)\n"
         "            _layer.setMinimumScale(_min_scale)\n"
         "            _layer.setMaximumScale(_max_scale)\n"
-        "        QgsProject.instance().addMapLayer(_layer)\n"
+        "        _proj = QgsProject.instance()\n"
+        "        _proj.addMapLayer(_layer, False)\n"
+        "        _proj.layerTreeRoot().addLayer(_layer)  # basemaps go to the bottom\n"
         "        result = {'added': True, 'id': _layer.id(), "
         "                  'min_scale': _min_scale, 'max_scale': _max_scale}\n"
     )

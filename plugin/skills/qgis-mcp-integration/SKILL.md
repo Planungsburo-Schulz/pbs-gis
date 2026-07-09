@@ -262,6 +262,16 @@ loaded, prefer `mcp__qgis__*` tools for ad-hoc layer manipulation,
 canvas screenshots, layout exports, etc.  The bridge is for *workflow*
 integration; the MCP tools are for *interactive* control.
 
+### Layer order convention — basemaps at the bottom
+
+Basemap layers (TK/DTK, DOP, any WMS/XYZ raster) sit at the **bottom**
+of the layer tree; data layers stack above. `qgis_bridge.add_wms_layer`
+and the MCP `add_web_layer` tool insert at the bottom automatically
+(override via `position="top"`). Reorder layers via layer-tree order /
+`set_layer_order` only — never `setHasCustomLayerOrder(True)`: a custom
+draw order freezes a snapshot list, so layers added later silently draw
+behind everything.
+
 ## Environment variable summary
 
 | Variable | Effect | Independent of others? |
