@@ -4,14 +4,31 @@ GIS/CAD utility library and project workflow runner.
 
 ## Install
 
+This project uses [uv](https://docs.astral.sh/uv/) for environment and
+dependency management. From the repo root:
+
 ```bash
-conda activate gis
-pip install gis-utils
+uv sync            # creates .venv and installs from uv.lock
 ```
+
+Run the CLI (or anything else) inside the managed environment via `uv run`:
+
+```bash
+uv run gis-workflow --help
+```
+
+The pinned interpreter is Python 3.14 (see `.python-version`); uv fetches
+it automatically if missing.
 
 ### Development install
 
-For contributing or modifying the library (edits take effect immediately):
+`uv sync` installs the package itself in editable mode, so source edits
+take effect immediately. To change dependencies, edit `pyproject.toml` and
+re-run `uv sync`.
+
+### Legacy: conda + pip
+
+The previous conda-based workflow still works:
 
 ```bash
 conda activate gis
@@ -59,7 +76,7 @@ in your open QGIS project (no manual reload), install the optional
 `[qgis]` extra and the matching QGIS plugin:
 
 ```bash
-pip install -e gis-utils[qgis]
+uv sync --extra qgis    # legacy: pip install -e gis-utils[qgis]
 ```
 
 Then in QGIS: `Plugins → Manage and Install Plugins…` → search
