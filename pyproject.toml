@@ -43,3 +43,8 @@ gis_utils = ["sources/*.yaml", "sources/hooks/*.py"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

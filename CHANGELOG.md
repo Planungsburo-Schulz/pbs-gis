@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`wfs.download` — `connection.bbox_kvp: true`** — opt-in plain-KVP-BBOX GetFeature statt OGR-WFS-Treiber. Nötig für Dienste, bei denen OGRs generierter FES-Filter die Geometrie-Property im falschen Namespace adressiert (LGLN `boris_wfs`: Geometrie ist `adv:position`, OGR filtert auf `boris:position` → Server liefert stillschweigend 0 Features). Der bislang ungenutzte `_wfs_get_feature_url`-Builder sendet BBOX jetzt spec-konform in x,y-Achsordnung (EPSG-projizierte CRS sind E,N definiert).
 
 - **`runner` — per-step `conda_env:`** — a workflow step can override the project-wide conda env, e.g. a headless-PyQGIS layout step (`conda_env: qgis-ltr`) inside a pipeline that otherwise runs in a plain geopandas env.
+- **Runner test suite** — `tests/test_runner.py`: 27 unit tests (pure `tmp_path`, no QGIS/network) for the runner core semantics — topological ordering incl. definition-order stability and diamond deps, make-style staleness over `inputs:` / `script:` / recipe `input_boundary:`, and error cases (circular dependency, unknown `depends_on`, missing `input_boundary`). `pytest` added as a dev dependency; run with `uv run pytest`.
 
 ### Fixed
 
