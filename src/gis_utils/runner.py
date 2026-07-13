@@ -463,8 +463,11 @@ def _collect_deps(name: str, by_name: dict[str, dict]) -> set[str]:
 WORKFLOW_TEMPLATE = """\
 project:
   name: {name}
-  conda_env: gis
 
+# Steps run in the current Python environment (`uv run gis-workflow run`).
+# A step may opt into a separate conda env via `conda_env: <name>` — e.g. a
+# headless-PyQGIS layout step that needs a QGIS env — see run_step().
+#
 # Define your pipeline steps below. Run with `gis-workflow run`.
 # Discover available templates via the gis-utils MCP tool `list_templates`
 # or `gis-workflow catalog`.

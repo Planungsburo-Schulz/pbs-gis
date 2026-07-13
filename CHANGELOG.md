@@ -32,6 +32,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **New-project template no longer defaults to conda** — post uv-migration, `gis-workflow init` generates a `workflow.yaml` without the old `project.conda_env: gis` line, so steps run in the current (uv-managed) Python environment by default. The per-step / project `conda_env:` override still works (see the per-step `conda_env:` note above and `run_step()`); it is now purely opt-in for steps that genuinely need a separate conda env (e.g. PyQGIS). No behaviour change for existing projects that set `conda_env:` explicitly.
 - **`templates/polygon_difference`** — `overlay:` now accepts either a single path or a list of paths (unioned before subtraction). `overlay_layer:` correspondingly accepts a list or a single string. Single-string usage is fully back-compat.
 - **`recipes/mv_alkis.yaml`** — description now warns against loading the full Flurstück layer as a WFS layer in QGIS and attribute-filtering client-side (60s+ timeouts on ~2M features); points users at `find_flurstuecke()` / `fetch_flurstuecke`.
 - **`gis-workflow init`** — default `workflow.yaml` no longer emits an `Example step` referencing a non-existent `scripts/example.py` (which made `gis-workflow run` fail on every fresh project). New template starts with `steps: []` and a commented-out example block.
