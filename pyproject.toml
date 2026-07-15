@@ -47,4 +47,9 @@ where = ["src"]
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
+    # Test-only: lets tests/test_manifest.py validate an emitted Stand-Manifest
+    # against the authoritative pbs_projekt.schema.ManifestDatei model when the
+    # pbs-projekt sibling checkout is reachable. NOT a runtime dependency —
+    # gis_utils.manifest emits plain YAML from its own field copy (Abgleich).
+    "pydantic>=2",
 ]

@@ -374,6 +374,7 @@ def run_workflow(
 
         if ok:
             print(f"  {prefix} {name} — done ({elapsed:.1f}s)")
+            _maybe_write_manifest(step, project_dir)
             _maybe_reload_qgis(step, project_dir)
         else:
             print(f"  {prefix} {name} — FAILED ({elapsed:.1f}s)")
@@ -385,6 +386,48 @@ def run_workflow(
     if not dry_run:
         print(f"\n{'All steps completed.' if all_ok else 'Completed with errors.'}")
     return all_ok
+
+
+def _maybe_write_manifest(step: dict, project_dir: Path) -> None:
+    """If a step is marked ``publiziert: true``, write a Stand-Manifest next to
+    each of its outputs (Phase-4 P4-B.1).
+
+    This is a completion-path flag, orthogonal to the step type — NOT a new step
+    type (R3: CAD steps are templates, publication is a flag on any step).
+    ``manifest_parameter`` (dict) is echoed into the manifest; the step's declared
+    ``inputs`` become the provenance ``quellen`` (each hashed).  A failure to emit
+    is reported loudly but does not un-do the step that already succeeded.
+    """
+    if not step.get("publiziert"):
+        return
+    from gis_utils.manifest import werkzeug_id, write_manifest
+
+    outputs = _collect_outputs(step)
+    if not outputs:
+        print("  [publiziert] step has no outputs — no manifest written")
+        return
+
+    parameter = step.get("manifest_parameter", {}) or {}
+    quellen = [project_dir / inp for inp in step.get("inputs", [])]
+    producer = step.get("template") or step.get("recipe") or step.get("script") or step["name"]
+    werkzeug = werkzeug_id(str(producer))
+
+    for out in outputs:
+        out_path = project_dir / out
+        if not out_path.exists():
+            print(f"  [publiziert] output missing, manifest skipped: {out}")
+            continue
+        try:
+            mpath = write_manifest(
+                out_path,
+                parameter=parameter,
+                quellen=quellen,
+                werkzeug=werkzeug,
+                basis=project_dir,
+            )
+            print(f"  [publiziert] manifest → {mpath.relative_to(project_dir)}")
+        except Exception as e:
+            print(f"  [publiziert] ERROR writing manifest for {out}: {e}")
 
 
 def _maybe_reload_qgis(step: dict, project_dir: Path) -> None:

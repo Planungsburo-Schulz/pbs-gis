@@ -484,6 +484,7 @@ qgis = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "pydantic" },
     { name = "pytest" },
 ]
 
@@ -505,7 +506,10 @@ requires-dist = [
 provides-extras = ["qgis"]
 
 [package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=9.1.1" }]
+dev = [
+    { name = "pydantic", specifier = ">=2" },
+    { name = "pytest", specifier = ">=9.1.1" },
+]
 
 [[package]]
 name = "h11"
