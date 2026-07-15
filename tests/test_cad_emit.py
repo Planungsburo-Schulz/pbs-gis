@@ -233,3 +233,23 @@ def test_invalid_linetype_falls_back(tmp_path):
     assert any("linetype" in w for w in results[0].warnings)
     doc = ezdxf.readfile(str(out))
     assert "Baugrenze" in doc.layers
+
+
+def test_z_geometries_export(tmp_path):
+    # Regression: 3D-Quellen (POLYGON Z / LINESTRING Z) brachen die
+    # Koordinaten-Entpackung ("too many values to unpack (expected 2, got 3)").
+    poly_z = Polygon([(0, 0, 5), (10, 0, 5), (10, 10, 5), (0, 10, 5)])
+    line_z = LineString([(0, 0, 1), (5, 5, 2), (10, 5, 3)])
+    out = tmp_path / "out.dxf"
+    results = export_layers(
+        [
+            LayerSpec(_gpkg(tmp_path, "geltung_z", poly_z), "Geltungsbereich", "geltungsbereich"),
+            LayerSpec(_gpkg(tmp_path, "grenze_z", line_z), "Baugrenze", "baugrenze"),
+        ],
+        styles=FIXTURE, out_dxf=out, crs=CRS,
+    )
+    assert out.exists()
+    assert results[0].geometries == 1
+    doc = ezdxf.readfile(str(out))
+    assert len(doc.modelspace().query('LWPOLYLINE[layer=="Geltungsbereich"]')) == 1
+    assert len(doc.modelspace().query('LWPOLYLINE[layer=="Baugrenze"]')) == 1

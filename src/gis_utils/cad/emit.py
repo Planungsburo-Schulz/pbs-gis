@@ -267,9 +267,9 @@ def _polygon_rings(geom) -> list[list[tuple[float, float]]]:
     """Exterior + interior rings of a (Multi)Polygon as coordinate lists."""
     rings: list[list[tuple[float, float]]] = []
     if geom.geom_type == "Polygon":
-        rings.append([(x, y) for x, y in geom.exterior.coords])
+        rings.append([(x, y) for x, y, *_ in geom.exterior.coords])
         for interior in geom.interiors:
-            rings.append([(x, y) for x, y in interior.coords])
+            rings.append([(x, y) for x, y, *_ in interior.coords])
     elif geom.geom_type == "MultiPolygon":
         for part in geom.geoms:
             rings.extend(_polygon_rings(part))
@@ -289,7 +289,7 @@ def _write_geometry(msp, geom, layer_name: str, style: Style, doc,
         _attach_provenance(e, doc)
         result.geometries += 1
     elif gtype in ("LineString", "LinearRing"):
-        pts = [(x, y) for x, y in geom.coords]
+        pts = [(x, y) for x, y, *_ in geom.coords]
         if len(pts) >= 2:
             e = msp.add_lwpolyline(pts, format="xy", close=close,
                                    dxfattribs={"layer": layer_name})
