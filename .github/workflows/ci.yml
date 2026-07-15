@@ -1,0 +1,14 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+jobs:
+  ci:
+    uses: Planungsburo-Schulz/.github/.github/workflows/pbs-ci.yml@main
+    with:
+      sibling_pbs_projekt: env
+      guard_test: test_emission_validates_against_pbs_projekt_manifestdatei
+    secrets:
+      sibling_token: ${{ secrets.PBS_CI_TOKEN }}
