@@ -172,6 +172,10 @@ All common functions importable from top level: `from pbs_gis import ...`
 - `from pbs_gis.osm import download_osm_polygons` — OSM Overpass API
 - `from pbs_gis.wms import run` — WMS download + vectorization
 - `from pbs_gis.grass import main` — GRASS GIS centerline extraction
+- `from pbs_gis.operations import clean_line` — drop near-duplicate vertices and
+  short segments from (Multi)LineStrings (gdf in/out)
+- `from pbs_gis.cad import insert_block_array` — emit block references at even
+  spacing along a line, optionally rotated to follow the path
 
 ## Full API reference
 

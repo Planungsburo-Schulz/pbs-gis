@@ -10,12 +10,13 @@ Public API:
 New input contract (Phase-4 R1): GeoPackage sources + a strict style map in,
 DXF out; no ``project_settings`` coupling, no sync. This cut adds the annotate
 layer on top of the emitter core: legend (:func:`add_legend`), block/text
-insertion (:func:`insert_block`, :func:`add_text`) and paperspace viewports
-(:func:`add_viewport`, :func:`add_viewport_for_bbox`). Manifest emission stays
-out of scope (p4a-3).
+insertion (:func:`insert_block`, :func:`add_text`), block arrays along a path
+(:func:`insert_block_array`) and paperspace viewports (:func:`add_viewport`,
+:func:`add_viewport_for_bbox`). Manifest emission stays out of scope (p4a-3).
 """
 
 from pbs_gis.cad.annotate import AnnotateError, add_text, insert_block
+from pbs_gis.cad.path_array import PathArrayResult, insert_block_array
 from pbs_gis.cad.colors import ColorError, normalize_transparency, resolve_color
 from pbs_gis.cad.emit import (
     CAD_APP_ID,
@@ -71,6 +72,8 @@ __all__ = [
     "LegendStyle",
     "LegendResult",
     "insert_block",
+    "insert_block_array",
+    "PathArrayResult",
     "add_text",
     "AnnotateError",
     "add_viewport",
