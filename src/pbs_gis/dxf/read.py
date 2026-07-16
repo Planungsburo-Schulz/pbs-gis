@@ -18,6 +18,8 @@ so it would trade a loud error for silent data loss.
 
 from __future__ import annotations
 
+import os
+import shutil
 from pathlib import Path
 
 import ezdxf
@@ -27,6 +29,27 @@ from ezdxf.document import Drawing
 DXF_SUFFIXES = frozenset({".dxf"})
 DWG_SUFFIXES = frozenset({".dwg"})
 CAD_SUFFIXES = DXF_SUFFIXES | DWG_SUFFIXES
+
+# The real converter executables, preferred over any PATH wrapper. Distro wrappers
+# (Arch/AUR /usr/bin/oda-file-converter) forward their arguments as unquoted "$@",
+# which word-splits every path containing a space — the converter then exits 0 and
+# writes NOTHING. Our project paths are full of spaces ("Öffentlich Planungsbüro
+# Schulz/…"), so the wrapper is a silent-failure trap; call the binary directly and
+# supply its private library dir ourselves. Verified 2026-07-16 on CachyOS:
+# wrapper + spaced path -> exit 0, no output; direct binary + same path -> converts.
+ODA_DIRECT_CANDIDATES = (
+    Path("/opt/oda-file-converter/oda-file-converter"),
+    Path("/opt/ODAFileConverter/ODAFileConverter"),
+)
+
+# Fallback: resolve by name from PATH. Distributions disagree on the name, and
+# ezdxf only ever probes for "ODAFileConverter", so a correctly installed
+# converter otherwise reports "not installed".
+ODA_EXEC_NAMES = (
+    "ODAFileConverter",
+    "oda-file-converter",
+    "TeighaFileConverter",
+)
 
 _ODA_MISSING_HINT = (
     "DWG input requires the ODA File Converter, which is not installed.\n"
@@ -41,11 +64,69 @@ class CadReadError(Exception):
     """Raised when a CAD input file cannot be read. Always names the cause."""
 
 
-def is_dwg_supported() -> bool:
-    """Report whether DWG input can be read (i.e. ODA File Converter present)."""
+def find_oda_exec() -> Path | None:
+    """Locate the ODA File Converter executable.
+
+    Prefers the real binary in :data:`ODA_DIRECT_CANDIDATES` over any PATH wrapper
+    (see the note there: wrappers silently drop spaced paths). Falls back to
+    resolving :data:`ODA_EXEC_NAMES` from PATH.
+
+    Returns the resolved path, or None if no converter is installed.
+    """
+    for candidate in ODA_DIRECT_CANDIDATES:
+        if candidate.is_file():
+            return candidate
+    for name in ODA_EXEC_NAMES:
+        found = shutil.which(name)
+        if found:
+            return Path(found)
+    return None
+
+
+def _ensure_odafc_configured() -> bool:
+    """Point ezdxf's odafc addon at the installed converter and make it runnable.
+
+    Sets ezdxf's ``odafc-addon.unix_exec_path`` and, when the converter ships its
+    shared libraries in a private directory next to the binary, prepends that
+    directory to ``LD_LIBRARY_PATH`` in this process's environment — the distro
+    wrapper we bypass is what would normally do this, and ezdxf's subprocess
+    inherits the environment.
+
+    An explicitly configured ``unix_exec_path`` is respected and never clobbered.
+    Returns True if a usable converter is configured.
+    """
     from ezdxf.addons import odafc
 
+    if odafc.is_installed():
+        return True
+
+    found = find_oda_exec()
+    if found is None:
+        return False
+
+    # The binary needs its own libs on the loader path (normally the wrapper's job).
+    lib_dir = found.parent
+    if (lib_dir / "libTD_Root.so").exists() or list(lib_dir.glob("libTD_*.so")):
+        current = os.environ.get("LD_LIBRARY_PATH", "")
+        parts = [p for p in current.split(os.pathsep) if p]
+        if str(lib_dir) not in parts:
+            os.environ["LD_LIBRARY_PATH"] = os.pathsep.join([str(lib_dir), *parts])
+
+    ezdxf.options.set("odafc-addon", "unix_exec_path", str(found))
     return bool(odafc.is_installed())
+
+
+def is_dwg_supported() -> bool:
+    """Report whether DWG input can be read (i.e. ODA File Converter present).
+
+    Resolves the converter under its distribution-specific names and locations, so
+    a correctly installed converter is reported as available even when ezdxf's own
+    probe (which only knows the name ``ODAFileConverter``) misses it.
+
+    Note: reading DWG runs the converter headlessly (ezdxf starts a dummy X display
+    via Xvfb); no GUI window appears.
+    """
+    return _ensure_odafc_configured()
 
 
 def read_cad(path: str | Path, *, audit: bool = False) -> Drawing:
@@ -119,7 +200,7 @@ def dwg_to_dxf(
         raise CadReadError(
             f"Destination already exists: {dest_p} (pass replace=True to overwrite)"
         )
-    if not odafc.is_installed():
+    if not _ensure_odafc_configured():
         raise CadReadError(f"Cannot convert {src_p}. {_ODA_MISSING_HINT}")
 
     try:
@@ -138,7 +219,7 @@ def _read_dwg(path: Path, *, audit: bool) -> Drawing:
     """Read a DWG via the ODA File Converter. Loud if the converter is absent."""
     from ezdxf.addons import odafc
 
-    if not odafc.is_installed():
+    if not _ensure_odafc_configured():
         raise CadReadError(f"Cannot read {path}. {_ODA_MISSING_HINT}")
     try:
         return odafc.readfile(str(path), audit=audit)

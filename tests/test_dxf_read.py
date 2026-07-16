@@ -119,3 +119,36 @@ def test_dwg_to_dxf_refuses_to_clobber_existing_dxf(tmp_path: Path) -> None:
     with pytest.raises(CadReadError, match="already exists"):
         dwg_to_dxf(dwg)
     assert existing.read_text() == "keep me"
+
+
+# --- converter discovery ----------------------------------------------------
+
+def test_find_oda_exec_prefers_direct_binary_over_path_wrapper(monkeypatch, tmp_path) -> None:
+    """The distro wrapper mangles spaced paths — the real binary must win."""
+    from pbs_gis.dxf import read as read_mod
+
+    direct = tmp_path / "opt" / "oda-file-converter" / "oda-file-converter"
+    direct.parent.mkdir(parents=True)
+    direct.write_text("#!/bin/sh\n")
+    monkeypatch.setattr(read_mod, "ODA_DIRECT_CANDIDATES", (direct,))
+    monkeypatch.setattr(read_mod.shutil, "which", lambda _n: "/usr/bin/oda-file-converter")
+
+    assert read_mod.find_oda_exec() == direct
+
+
+def test_find_oda_exec_falls_back_to_path(monkeypatch, tmp_path) -> None:
+    from pbs_gis.dxf import read as read_mod
+
+    monkeypatch.setattr(read_mod, "ODA_DIRECT_CANDIDATES", (tmp_path / "absent",))
+    monkeypatch.setattr(
+        read_mod.shutil, "which", lambda n: "/usr/bin/found" if n == "ODAFileConverter" else None
+    )
+    assert read_mod.find_oda_exec() == Path("/usr/bin/found")
+
+
+def test_find_oda_exec_returns_none_when_absent(monkeypatch, tmp_path) -> None:
+    from pbs_gis.dxf import read as read_mod
+
+    monkeypatch.setattr(read_mod, "ODA_DIRECT_CANDIDATES", (tmp_path / "absent",))
+    monkeypatch.setattr(read_mod.shutil, "which", lambda _n: None)
+    assert read_mod.find_oda_exec() is None
