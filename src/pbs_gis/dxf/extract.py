@@ -25,6 +25,8 @@ import geopandas as gpd
 import numpy as np
 from shapely.geometry import LineString, MultiPolygon, Point, Polygon
 
+from pbs_gis.dxf.read import read_cad
+
 
 # ---------------------------------------------------------------------------
 # Low-level helpers
@@ -405,7 +407,8 @@ def extract_3dsolids(
     Automatically applies GEODATA offset if coordinates are in local space.
 
     Args:
-        dxf_path: Path to DXF file.
+        dxf_path: Path to a DXF or DWG file (DWG needs the ODA File Converter,
+            see :mod:`pbs_gis.dxf.read`).
         crs: Coordinate reference system (e.g. 'EPSG:25832').
         layers: List of layer names to extract. None = all layers with 3DSOLIDs.
         bottom_face: If True, use only bottom-Z vertices for each solid.
@@ -413,7 +416,7 @@ def extract_3dsolids(
     Returns:
         Dict of {layer_name: GeoDataFrame} with Polygon geometries.
     """
-    doc = ezdxf.readfile(str(dxf_path))
+    doc = read_cad(dxf_path)
     msp = doc.modelspace()
     geodata_offset = _get_geodata_offset(doc)
 
@@ -752,7 +755,8 @@ def extract_dxf_layers(
     Extract all geometry from a DXF file, organized by layer and geometry type.
 
     Args:
-        dxf_path: Path to DXF file.
+        dxf_path: Path to a DXF or DWG file (DWG needs the ODA File Converter,
+            see :mod:`pbs_gis.dxf.read`).
         crs: Coordinate reference system string (e.g. "EPSG:25833").
         layers: Only extract these layers. None = all layers.
         exclude_layers: Skip these layers.
@@ -769,7 +773,7 @@ def extract_dxf_layers(
         Each GeoDataFrame has columns: geometry, entity_type, plus any extras
         (radius, major_axis, minor_axis for circles/ellipses as points).
     """
-    doc = ezdxf.readfile(str(dxf_path))
+    doc = read_cad(dxf_path)
     msp = doc.modelspace()
     exclude = set(exclude_layers or [])
     include = set(layers) if layers else None
