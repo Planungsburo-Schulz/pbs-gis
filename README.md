@@ -140,6 +140,54 @@ Steps marked `run: auto` (default) are skipped if outputs exist and are up-to-da
 Steps marked `run: always` execute every time.
 Dependencies are resolved automatically (topological sort).
 
+### Ops steps (declarative geometry pipelines)
+
+Alongside `template:` / `recipe:` / `script:` steps, a step may declare an
+`ops:` chain — a list of geometry operations applied `gdf → gdf` in order to a
+single input layer:
+
+```yaml
+steps:
+  - name: Baufeld säubern
+    ops:
+      - {op: clean_line, min_segment_length: 0.5}
+      - {makro: saeuberung_standard}
+    input: Geodaten/baufeld_roh.gpkg
+    output: Geodaten/baufeld.gpkg
+```
+
+Each element is either an op `{op: <name>, ...params}` (params are passed as
+keyword arguments) or a makro reference `{makro: <name>}`. Registered ops are
+the single-input `gdf → gdf` functions from `pbs_gis.operations` and the
+`pbs_gis.geometry` cleaning family (e.g. `clean_line`, `remove_degenerate_spikes`,
+`remove_protrusions`, `remove_slivers_erosion`, `simplify_slivers`,
+`morphological_filter`, `subtract_smaller_overlaps`, `repair`). An unknown op
+name is a hard error.
+
+**Makros** are named, reusable op lists. One ships built-in —
+`saeuberung_standard` (`remove_degenerate_spikes → remove_protrusions →
+remove_slivers_erosion → repair`). Define your own under a top-level `makros:`
+key (same op-list form) and reference them from any ops step:
+
+```yaml
+makros:
+  trassen_clean:
+    - {op: clean_line, min_segment_length: 0.5}
+    - {op: repair}
+
+steps:
+  - name: Trassen säubern
+    ops:
+      - {makro: trassen_clean}
+    input: Geodaten/trassen_roh.gpkg
+    output: Geodaten/trassen.gpkg
+```
+
+A makro is expanded inline (order preserved, reusable multiple times). A makro
+body may not reference another makro (no recursion), an unknown makro name is a
+hard error, and a project makro may not reuse a built-in makro's name — all are
+loud errors, never silent skips or overrides.
+
 ## Library API
 
 All common functions importable from top level: `from pbs_gis import ...`

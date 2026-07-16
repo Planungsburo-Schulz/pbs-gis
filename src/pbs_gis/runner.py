@@ -111,7 +111,8 @@ def should_skip(step: dict, project_dir: Path) -> bool:
     Skip only if all outputs exist AND no declared input is newer than the
     oldest output (make-style staleness). Inputs are taken from ``inputs:``
     (any step), the step's own ``script:`` (so a code edit re-runs it), plus,
-    for recipe steps, ``input_boundary:`` (the scope file).
+    for recipe steps, ``input_boundary:`` (the scope file) and, for ops steps,
+    ``input:`` (the source layer).
     Declaring a step's real input files — including upstream steps' outputs —
     lets a single ``gis-workflow run`` re-run the step, and cascade downstream,
     when the data changes, instead of skipping on mere output existence.
@@ -137,6 +138,9 @@ def should_skip(step: dict, project_dir: Path) -> bool:
     input_boundary = step.get("input_boundary")
     if input_boundary and step.get("recipe"):
         declared_inputs.append(input_boundary)
+    # An ops step reads one source layer via ``input:`` — count it as an input.
+    if step.get("ops") is not None and step.get("input"):
+        declared_inputs.append(step["input"])
     for inp in declared_inputs:
         if _newest_mtime(project_dir / inp) > oldest_output:
             return False  # input changed — re-run
@@ -144,14 +148,27 @@ def should_skip(step: dict, project_dir: Path) -> bool:
     return True
 
 
-def run_step(step: dict, project_dir: Path, conda_env: str | None = None) -> bool:
+def run_step(
+    step: dict,
+    project_dir: Path,
+    conda_env: str | None = None,
+    *,
+    makros: dict | None = None,
+) -> bool:
     """Execute a single workflow step. Returns True on success.
 
     A step may override the project-wide conda env via ``conda_env:`` —
     e.g. a PyQGIS step that needs a qgis env while the pipeline runs in a
     plain geopandas env.
+
+    *makros* is the workflow's top-level ``makros:`` mapping, forwarded to
+    ``ops`` steps so they can expand ``{makro: <name>}`` references.
     """
     conda_env = step.get("conda_env") or conda_env
+    # Ops steps: run a declarative gdf->gdf op chain (see ops_pipeline).
+    if step.get("ops") is not None:
+        return _run_ops_step(step, project_dir, makros)
+
     # Template steps: run built-in processing templates
     if step.get("template"):
         return _run_template_step(step, project_dir)
@@ -297,6 +314,60 @@ def _run_recipe_step(step: dict, project_dir: Path) -> bool:
         return False
 
 
+def _driver_for(path: Path) -> str:
+    """Pick a geopandas driver from an output file extension (GPKG default)."""
+    ext = path.suffix.lower()
+    if ext == ".shp":
+        return "ESRI Shapefile"
+    if ext == ".geojson":
+        return "GeoJSON"
+    return "GPKG"
+
+
+def _run_ops_step(step: dict, project_dir: Path, makros: dict | None) -> bool:
+    """Execute an ``ops`` step: read one layer, run the op chain, write output.
+
+    The step declares ``input:`` (a single geopandas-readable source layer),
+    ``ops:`` (the op/makro chain) and ``output:``. Makro expansion, op lookup
+    and their loud-error rules live in :mod:`pbs_gis.ops_pipeline`.
+    """
+    import geopandas as gpd
+
+    from pbs_gis.ops_pipeline import OpsPipelineError, run_ops
+
+    input_rel = step.get("input")
+    if not input_rel:
+        print("  [ERROR] ops step requires 'input' (source layer path)")
+        return False
+    input_path = project_dir / input_rel
+    if not input_path.exists():
+        print(f"  [ERROR] ops input not found: {input_path}")
+        return False
+    output = step.get("output")
+    if not output:
+        print("  [ERROR] ops step requires 'output'")
+        return False
+
+    try:
+        gdf = gpd.read_file(input_path)
+        result = run_ops(gdf, step["ops"], project_makros=makros)
+    except OpsPipelineError as e:
+        print(f"  [ERROR] {e}")
+        return False
+    except Exception as e:
+        print(f"  [ERROR] ops step failed: {e}")
+        return False
+
+    output_path = project_dir / output
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        result.to_file(output_path, driver=_driver_for(output_path))
+    except Exception as e:
+        print(f"  [ERROR] writing ops output {output}: {e}")
+        return False
+    return True
+
+
 def run_workflow(
     project_dir: str | Path,
     *,
@@ -321,6 +392,8 @@ def run_workflow(
     project_name = wf.get("project", {}).get("name", project_dir.name)
     default_env = wf.get("project", {}).get("conda_env")
     env = conda_env or default_env
+
+    makros = wf.get("makros", {}) or {}
 
     steps = wf.get("steps", [])
     if not steps:
@@ -350,7 +423,9 @@ def run_workflow(
             deps = step.get("depends_on", [])
             dep_str = f" (after: {', '.join(deps)})" if deps else ""
             print(f"  {prefix} {name} [{status}]{dep_str}")
-            if step.get("script"):
+            if step.get("ops") is not None:
+                print(f"        → ops[{len(step['ops'])}] → {step.get('output', '?')}")
+            elif step.get("script"):
                 print(f"        → {step['script']}")
             elif step.get("recipe"):
                 detail = f"recipe:{step['recipe']}"
@@ -369,7 +444,7 @@ def run_workflow(
 
         print(f"  {prefix} {name}...")
         t0 = time.time()
-        ok = run_step(step, project_dir, conda_env=env)
+        ok = run_step(step, project_dir, conda_env=env, makros=makros)
         elapsed = time.time() - t0
 
         if ok:
@@ -409,7 +484,11 @@ def _maybe_write_manifest(step: dict, project_dir: Path) -> None:
 
     parameter = step.get("manifest_parameter", {}) or {}
     quellen = [project_dir / inp for inp in step.get("inputs", [])]
-    producer = step.get("template") or step.get("recipe") or step.get("script") or step["name"]
+    # An ops step's source layer is a provenance quelle too.
+    if step.get("ops") is not None and step.get("input"):
+        quellen.append(project_dir / step["input"])
+    producer = (step.get("template") or step.get("recipe") or step.get("script")
+                or ("ops" if step.get("ops") is not None else None) or step["name"])
     werkzeug = werkzeug_id(str(producer))
 
     for out in outputs:
