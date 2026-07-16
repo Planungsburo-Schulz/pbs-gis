@@ -23,6 +23,8 @@ Families:
   :func:`simplify_slivers`. Distinct algorithms (erosion/dilation, vertex
   cleaning, convex-body protrusion removal, Douglas-Peucker) kept as separate
   functions rather than merged — they clean different defects.
+* Line cleaning — :func:`clean_line` (consecutive-duplicate and short-segment
+  removal on LineString/MultiLineString, optional Douglas-Peucker).
 * Construction — :func:`connect_points`.
 * Reconstruction — :func:`dissolve_by_majority_intersection`.
 * Filtering — :func:`filter_by_column`, :func:`filter_by_intersection`.
@@ -32,7 +34,14 @@ from __future__ import annotations
 
 import geopandas as gpd
 import numpy as np
-from shapely.geometry import LineString, MultiPoint, MultiPolygon, Point, Polygon
+from shapely.geometry import (
+    LineString,
+    MultiLineString,
+    MultiPoint,
+    MultiPolygon,
+    Point,
+    Polygon,
+)
 from shapely.ops import unary_union
 
 # shapely buffer style codes (kept explicit so intent is legible).
@@ -225,6 +234,71 @@ def remove_protrusions(
         else:
             cleaned = geom
         if cleaned is not None and not cleaned.is_empty:
+            new_row = row.copy()
+            new_row.geometry = cleaned
+            kept.append(new_row)
+    if not kept:
+        return gpd.GeoDataFrame(columns=gdf.columns, crs=gdf.crs)
+    return gpd.GeoDataFrame(kept, crs=gdf.crs).reset_index(drop=True)
+
+
+# ---------------------------------------------------------------------------
+# Line cleaning family
+# ---------------------------------------------------------------------------
+
+
+def clean_line(
+    gdf: gpd.GeoDataFrame,
+    *,
+    tolerance: float = 0.01,
+    min_segment_length: float = 0.5,
+    simplify_tolerance: float = 0.0,
+) -> gpd.GeoDataFrame:
+    """Clean LineString geometries: drop near-duplicate vertices and short segments.
+
+    Ported from the reference ``cleanLine`` operation. Each line is cleaned in
+    three passes:
+
+    1. **Near-duplicate vertices** closer than *tolerance* to the previously
+       kept vertex are removed.
+    2. **Short segments** are removed: walking from the start, a vertex is
+       dropped when its distance to the last kept vertex is below
+       *min_segment_length*. The final vertex is always kept, so endpoints —
+       and the closing vertex of a closed ring — survive.
+    3. **Optional** Douglas-Peucker simplification when *simplify_tolerance*
+       is greater than zero (disabled by default).
+
+    ``LineString`` and ``MultiLineString`` are cleaned part-by-part; a
+    non-line geometry is passed through unchanged. Lines that collapse to
+    fewer than two vertices, or become empty/invalid, are dropped. On a
+    per-feature error the original geometry is kept. Attributes and CRS are
+    preserved.
+
+    Args:
+        gdf: GeoDataFrame of (Multi)LineString geometries (projected CRS with
+            metric units for the metric thresholds to make sense).
+        tolerance: Vertex-merge threshold (CRS units); vertices closer than
+            this to their predecessor are treated as duplicates.
+        min_segment_length: Segments shorter than this are removed.
+        simplify_tolerance: Douglas-Peucker tolerance; ``0`` disables it.
+
+    Returns:
+        Cleaned GeoDataFrame (same columns, CRS preserved).
+    """
+    if gdf.empty:
+        return gdf.copy()
+    kept = []
+    for _, row in gdf.iterrows():
+        geom = row.geometry
+        if geom is None or geom.is_empty:
+            continue
+        try:
+            cleaned = _clean_line_geometry(
+                geom, tolerance, min_segment_length, simplify_tolerance
+            )
+        except Exception:
+            cleaned = geom
+        if cleaned is not None and not cleaned.is_empty and cleaned.is_valid:
             new_row = row.copy()
             new_row.geometry = cleaned
             kept.append(new_row)
@@ -446,6 +520,71 @@ def filter_by_intersection(
 # ---------------------------------------------------------------------------
 # Internal helpers (polygon cleaning + point ordering)
 # ---------------------------------------------------------------------------
+
+
+def _clean_line_geometry(geom, tolerance: float, min_segment_length: float,
+                         simplify_tolerance: float):
+    """Clean one (Multi)LineString; pass non-line geometries through."""
+    if isinstance(geom, LineString):
+        return _clean_one_line(geom, tolerance, min_segment_length, simplify_tolerance)
+    if isinstance(geom, MultiLineString):
+        parts = [_clean_one_line(g, tolerance, min_segment_length, simplify_tolerance)
+                 for g in geom.geoms]
+        parts = [p for p in parts if p is not None and not p.is_empty]
+        return MultiLineString(parts) if parts else None
+    return geom
+
+
+def _clean_one_line(line: LineString, tolerance: float, min_segment_length: float,
+                    simplify_tolerance: float) -> LineString | None:
+    if not isinstance(line, LineString) or line.is_empty:
+        return line
+    coords = list(line.coords)
+    if len(coords) < 2:
+        return line
+    coords = _drop_consecutive_close(coords, tolerance)
+    if len(coords) < 2:
+        return None
+    coords = _drop_short_segments(coords, min_segment_length)
+    if len(coords) < 2:
+        return None
+    cleaned = LineString(coords)
+    if simplify_tolerance > 0:
+        simplified = cleaned.simplify(simplify_tolerance, preserve_topology=False)
+        if not simplified.is_empty and simplified.is_valid:
+            cleaned = simplified
+    return cleaned
+
+
+def _drop_consecutive_close(coords: list, tolerance: float) -> list:
+    """Drop vertices within *tolerance* of the previously kept vertex."""
+    out = [coords[0]]
+    for c in coords[1:]:
+        if Point(c).distance(Point(out[-1])) > tolerance:
+            out.append(c)
+    return out
+
+
+def _drop_short_segments(coords: list, min_segment_length: float) -> list:
+    """Drop vertices that would form a segment shorter than *min_segment_length*.
+
+    The first and last vertices are always kept (endpoints / ring closure). If
+    everything between collapses, fall back to the two endpoints.
+    """
+    if len(coords) < 3 or min_segment_length <= 0:
+        return coords
+    out = [coords[0]]
+    last = len(coords) - 1
+    for i in range(1, len(coords)):
+        if i == last:
+            out.append(coords[i])
+            continue
+        if Point(coords[i]).distance(Point(out[-1])) < min_segment_length:
+            continue
+        out.append(coords[i])
+    if len(out) < 2:
+        return [coords[0], coords[-1]]
+    return out
 
 
 def _nn_order(arr: np.ndarray, indices: list[int]) -> list[tuple[float, float]]:

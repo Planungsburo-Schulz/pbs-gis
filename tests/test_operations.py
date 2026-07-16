@@ -6,7 +6,10 @@ import geopandas as gpd
 import pytest
 from shapely.geometry import LineString, Point, Polygon
 
+from shapely.geometry import MultiLineString
+
 from pbs_gis.operations import (
+    clean_line,
     connect_points,
     dissolve_by_majority_intersection,
     filter_by_column,
@@ -83,6 +86,74 @@ def test_remove_protrusions_strips_thin_spike():
     assert len(out) == 1
     assert out.geometry.iloc[0].area < poly.area
     assert out.geometry.iloc[0].area == pytest.approx(body.area, rel=0.1)
+
+
+# --- clean_line ------------------------------------------------------------
+
+def test_clean_line_removes_short_segment_vertex():
+    # A near-collinear midpoint 0.1m from the start creates a 0.1m segment;
+    # min_segment_length=0.5 drops it, keeping start, the 1m vertex, and the end.
+    line = LineString([(0, 0), (0.1, 0), (1, 0), (2, 0)])
+    out = clean_line(_gdf([line]), min_segment_length=0.5)
+    assert len(out) == 1
+    coords = list(out.geometry.iloc[0].coords)
+    assert coords == [(0, 0), (1, 0), (2, 0)]
+    assert out.crs == CRS
+
+
+def test_clean_line_removes_consecutive_duplicate():
+    line = LineString([(0, 0), (5, 0), (5, 0), (10, 0)])
+    out = clean_line(_gdf([line]), tolerance=0.01, min_segment_length=0.0)
+    coords = list(out.geometry.iloc[0].coords)
+    assert coords == [(0, 0), (5, 0), (10, 0)]
+
+
+def test_clean_line_preserves_attributes():
+    line = LineString([(0, 0), (10, 0)])
+    out = clean_line(_gdf([line], name=["trasse"]))
+    assert out["name"].iloc[0] == "trasse"
+
+
+def test_clean_line_keeps_closed_ring_closed():
+    # A closed square ring with a duplicated corner vertex.
+    ring = LineString([(0, 0), (10, 0), (10, 0), (10, 10), (0, 10), (0, 0)])
+    out = clean_line(_gdf([ring]), tolerance=0.01, min_segment_length=0.1)
+    geom = out.geometry.iloc[0]
+    assert geom.is_valid
+    assert geom.is_closed
+    assert list(geom.coords)[0] == list(geom.coords)[-1]
+    # Duplicate corner removed → 5 coords (4 corners + closing point).
+    assert len(geom.coords) == 5
+
+
+def test_clean_line_handles_multilinestring():
+    a = LineString([(0, 0), (5, 0), (5, 0), (10, 0)])  # has a duplicate
+    b = LineString([(0, 10), (10, 10)])
+    out = clean_line(_gdf([MultiLineString([a, b])]), tolerance=0.01,
+                     min_segment_length=0.0)
+    assert len(out) == 1
+    geom = out.geometry.iloc[0]
+    assert isinstance(geom, MultiLineString)
+    assert len(geom.geoms) == 2
+    assert len(geom.geoms[0].coords) == 3  # duplicate dropped in first part
+
+
+def test_clean_line_drops_degenerate_line():
+    # Both vertices within tolerance collapse to one point → feature dropped.
+    line = LineString([(0, 0), (0.001, 0)])
+    out = clean_line(_gdf([line]), tolerance=0.01)
+    assert out.empty
+
+
+def test_clean_line_simplify_removes_collinear():
+    line = LineString([(0, 0), (5, 0), (10, 0)])
+    out = clean_line(_gdf([line]), min_segment_length=0.0, simplify_tolerance=0.1)
+    assert list(out.geometry.iloc[0].coords) == [(0, 0), (10, 0)]
+
+
+def test_clean_line_empty_gdf():
+    out = clean_line(gpd.GeoDataFrame(geometry=[], crs=CRS))
+    assert out.empty
 
 
 # --- connect_points --------------------------------------------------------
