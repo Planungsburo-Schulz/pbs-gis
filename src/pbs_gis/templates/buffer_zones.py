@@ -74,6 +74,32 @@ _BAB_HALF_MITTELSTREIFEN_M = 2.0
 _BAB_FAHRSTREIFEN_M = 3.75
 
 
+def _ensure_working_crs(gdf, layer_name: str, params: dict, crs: str):
+    """Bring *gdf* into the working ``crs``.
+
+    A CRS-less source is an explicit assumption, never a silent stamp: stamping
+    a naive layer with the working ``crs`` presumes its coordinates already sit
+    in that frame.  The optional param ``source_crs_assume`` declares the real
+    source CRS (used verbatim), after which reprojection to ``crs`` follows.
+    Without it → ValueError.
+    """
+    if gdf.crs is None:
+        assume = params.get("source_crs_assume")
+        if not assume:
+            raise ValueError(
+                f"Quelle '{layer_name}' trägt kein CRS — 'source_crs_assume' "
+                f"explizit setzen (Stempeln ist eine Annahme, keine Reprojektion)"
+            )
+        gdf = gdf.set_crs(assume)
+        print(
+            f"  CRS-Annahme {assume} für {layer_name} "
+            f"(deklariert via source_crs_assume)"
+        )
+    if str(gdf.crs) != crs:
+        gdf = gdf.to_crs(crs)
+    return gdf
+
+
 def _resolve_source_extend(params: dict) -> float:
     """Decide ``source_extend_m`` from explicit value or lane-count derivation.
 
@@ -106,7 +132,7 @@ def _resolve_source_extend(params: dict) -> float:
         "mode for road-axis sources"
     ),
     params=[
-        "source", "crs", "zones",
+        "source", "crs", "zones", "source_crs_assume",
         "source_extend_m", "lanes_per_direction", "road_type",
         "target", "report_csv",
     ],
@@ -120,6 +146,10 @@ def buffer_zones_template(
         source: Path to source layer (Shapefile / GeoPackage / GeoJSON).
             Geometries are unioned into one geometry before buffering.
         crs: Projected CRS in metres (e.g. ``"EPSG:25833"``).
+        source_crs_assume (optional): CRS to stamp onto a CRS-less source or
+            target layer before reprojection (an explicit assumption about the
+            layer's real CRS, not a reprojection). Without it, a CRS-less input
+            raises rather than being silently stamped with ``crs``.
         zones: List of zone definitions, each a dict with:
             - ``name`` (str): zone label.
             - ``outer_m`` (float): outer distance in CRS units.
@@ -152,10 +182,7 @@ def buffer_zones_template(
     if src_gdf.empty:
         print(f"  [ERROR] source has no features: {source_path}")
         return False
-    if src_gdf.crs is None:
-        src_gdf = src_gdf.set_crs(crs)
-    elif str(src_gdf.crs) != crs:
-        src_gdf = src_gdf.to_crs(crs)
+    src_gdf = _ensure_working_crs(src_gdf, source_path.name, params, crs)
 
     source_geom = unary_union(src_gdf.geometry.values)
     if source_geom is None or source_geom.is_empty:
@@ -204,10 +231,7 @@ def buffer_zones_template(
             print(f"  [WARN] target not found, skipping intersection: {target_path}")
         else:
             tgt_gdf = gpd.read_file(target_path)
-            if tgt_gdf.crs is None:
-                tgt_gdf = tgt_gdf.set_crs(crs)
-            elif str(tgt_gdf.crs) != crs:
-                tgt_gdf = tgt_gdf.to_crs(crs)
+            tgt_gdf = _ensure_working_crs(tgt_gdf, target_path.name, params, crs)
             tgt_union = unary_union(tgt_gdf.geometry.values)
 
             int_records = []
