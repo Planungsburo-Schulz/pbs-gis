@@ -141,8 +141,14 @@ def area_by_category(
         DataFrame with columns: category, area_m2, area_ha.
         Sorted by category.
     """
-    # Ensure same CRS
-    if target_gdf.crs and category_gdf.crs and target_gdf.crs != category_gdf.crs:
+    # Ensure same CRS — a CRS-less side would be overlaid silently on raw
+    # coordinates, mis-measuring the intersection areas.
+    if target_gdf.crs is None or category_gdf.crs is None:
+        raise ValueError(
+            "area_by_category benötigt ein CRS auf beiden Layern "
+            "(kein stiller Overlay auf CRS-losen Geometrien)"
+        )
+    if target_gdf.crs != category_gdf.crs:
         category_gdf = category_gdf.to_crs(target_gdf.crs)
 
     target = target_gdf[target_gdf.geometry.notna()].copy()
@@ -224,7 +230,7 @@ def area_length_report(
             out.append("- (leer)")
             out.append("")
             continue
-        gdf_proj = gdf.to_crs(crs) if gdf.crs and str(gdf.crs) != crs else gdf
+        gdf_proj = gdf.to_crs(crs) if gdf.crs != crs else gdf
         metrics = metrics_per_layer.get(name, _auto_metrics_for(gdf_proj))
         if not metrics:
             out.append("- (keine Metriken — Geometrie weder Linie noch Polygon)")
