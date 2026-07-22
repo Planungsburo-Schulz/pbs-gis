@@ -308,6 +308,40 @@ def _guide_cache_path(
     return cache_dir / f"atkis_guide_{safe}_{key}.gpkg"
 
 
+def _parse_wfs_response(content: bytes) -> ET.Element:
+    """Parse a WFS XML payload, raising on an OGC ExceptionReport.
+
+    A WFS may answer with an error XML body even after HTTP 200 (or an error
+    body that slipped past ``raise_for_status``).  Read as GetFeature it would
+    yield zero members → a silent "0 Features im Extent" and an empty
+    classification flowing on as a result.  Detect the ExceptionReport
+    namespace-tolerantly (root tag ends on ``ExceptionReport``; pattern from
+    ``wms.py`` parse_feature_info_gml) and raise ``RuntimeError`` with the
+    service message instead.
+    """
+    root = ET.fromstring(content)
+    tag_root = root.tag.split("}")[-1] if "}" in root.tag else root.tag
+    if tag_root.endswith("ExceptionReport") or tag_root.endswith("ServiceExceptionReport"):
+        msg = ""
+        for elem in root.iter():
+            tag = elem.tag.split("}")[-1] if "}" in elem.tag else elem.tag
+            if tag.endswith("ExceptionText") or tag.endswith("ServiceException"):
+                if elem.text and elem.text.strip():
+                    msg = elem.text.strip()
+                    break
+        if not msg:
+            # Fall back to the exceptionCode attribute of the first Exception
+            for elem in root.iter():
+                tag = elem.tag.split("}")[-1] if "}" in elem.tag else elem.tag
+                if tag.endswith("Exception"):
+                    msg = elem.get("exceptionCode", "") or elem.get("code", "")
+                    if msg:
+                        break
+        msg = msg[:300] if msg else "WFS returned an OGC ExceptionReport (no message)"
+        raise RuntimeError(f"WFS-Dienstfehler statt Features: {msg}")
+    return root
+
+
 def _wfs_download_geopandas(
     wfs_url: str, layer: str, extent, crs: str
 ) -> gpd.GeoDataFrame:
@@ -345,7 +379,7 @@ def _download_features_with_xlinks(
     }, timeout=REQUEST_TIMEOUT)
     r.raise_for_status()
 
-    root = ET.fromstring(r.content)
+    root = _parse_wfs_response(r.content)
     rows = []
     xlinks: dict[str, str] = {}
     for member in root.iter(f"{{{NS['wfs']}}}member"):
@@ -404,7 +438,7 @@ def _fetch_features_by_ids(
             "typeNames": layer, "resourceID": ",".join(batch),
         }, timeout=REQUEST_TIMEOUT)
         r.raise_for_status()
-        root = ET.fromstring(r.content)
+        root = _parse_wfs_response(r.content)
         for member in root.iter(f"{{{NS['wfs']}}}member"):
             if len(member) == 0:
                 continue
