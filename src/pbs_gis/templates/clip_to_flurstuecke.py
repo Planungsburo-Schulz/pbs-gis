@@ -56,7 +56,12 @@ def clip_to_flurstuecke(
     oids = params["oids"]
     if not oids:
         raise ValueError("clip_to_flurstuecke requires non-empty 'oids' list")
-    crs = params.get("crs", "EPSG:25833")
+    crs = params.get("crs")
+    if not crs:
+        raise ValueError(
+            "'crs' ist Pflicht (kein stiller Default — DATENKORREKTHEIT "
+            "gefährliche Defaults); z. B. 'EPSG:25833'"
+        )
     bbox_buffer_m = float(params.get("bbox_buffer_m", 500))
     overwrite = bool(params.get("overwrite", False))
     input_layer = params.get("input_layer")

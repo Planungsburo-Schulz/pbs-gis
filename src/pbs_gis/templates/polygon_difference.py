@@ -56,7 +56,12 @@ def polygon_difference(
         raise ValueError("polygon_difference requires an 'output:' path")
 
     input_path = (project_dir / params["input"]).resolve()
-    crs = params.get("crs", "EPSG:25833")
+    crs = params.get("crs")
+    if not crs:
+        raise ValueError(
+            "'crs' ist Pflicht (kein stiller Default — DATENKORREKTHEIT "
+            "gefährliche Defaults); z. B. 'EPSG:25833'"
+        )
     input_layer = params.get("input_layer")
     output_layer = params.get("output_layer", output_path.stem)
 
