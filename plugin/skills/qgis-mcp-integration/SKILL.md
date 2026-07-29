@@ -82,40 +82,55 @@ no fork or wrapper script needed:
 - **Plugin (QGIS side)**: toolbar dropdown next to the "Run MCP"
   button has a port spin-box.  Choice persists in QSettings
   per-profile.
-- **Server (Claude side)**: reads `QGIS_MCP_PORT` env var.
+- **Server (Claude side)**: reads `QGIS_MCP_INSTANCES` (several ports
+  from one registration), falling back to `QGIS_MCP_PORT` for a
+  single instance.
 
-**Convention: name registrations by port number, not by project.**
-The MCP is port-bound and project-blind — it sees whatever project
-is loaded behind the port at the moment of the call.  Use names like
-`qgis_9877`, `qgis_9878` so the registration name encodes the port,
-making it obvious which spinbox value to set in QGIS.
+**Convention: ONE registration; name the instances, not the ports.**
+The MCP is port-bound and project-blind — it sees whatever project is
+loaded behind the port at the moment of the call.  Since qgis-mcp
+v0.7.2 a single registration reaches every running QGIS: list them as
+comma-separated `name=port` (or `name=host:port`), then select with
+`instance=`.
 
 ```bash
-# Default instance — port 9876, registration name "qgis":
 claude mcp add qgis --scope user \
-  -e PYTHONPATH=/home/<USER>/dev/Gunther-Schulz/qgis-mcp/src \
-  -- uv run --no-sync \
-  --directory /home/<USER>/dev/Gunther-Schulz/qgis-mcp \
-  src/qgis_mcp/server.py
-
-# Second instance — port 9877, registration name "qgis_9877":
-claude mcp add qgis_9877 --scope user \
-  -e QGIS_MCP_PORT=9877 \
+  -e QGIS_MCP_INSTANCES=planning=9876,archive=9877 \
   -e PYTHONPATH=/home/<USER>/dev/Gunther-Schulz/qgis-mcp/src \
   -- uv run --no-sync \
   --directory /home/<USER>/dev/Gunther-Schulz/qgis-mcp \
   src/qgis_mcp/server.py
 ```
 
-Both env vars (`QGIS_MCP_PORT` *and* `PYTHONPATH`) are required for
-non-default ports — `claude mcp list` reports `✗ Failed to connect`
-if `PYTHONPATH` is missing because the server crashes at import
-before it ever reaches the port logic.  A quick `claude mcp list`
-sanity check will catch this immediately.
+```python
+mcp__qgis__list_qgis_instances()            # names, ports, reachability
+mcp__qgis__get_layers(instance="archive")   # explicit target
+mcp__qgis__get_layers()                     # implicit — see below
+```
 
-After registration, `/reload-plugins` in Claude Code is sufficient —
-no full restart required.  Each port appears as its own tool family:
-`mcp__qgis__*`, `mcp__qgis_9877__*`, etc.
+- **Omitting `instance=` targets the entry named `default`, else the
+  FIRST entry listed.**  With `planning=9876,archive=9877` that is
+  `planning`.  Name an entry `default` to make the choice explicit
+  rather than positional.
+- **Unknown names are rejected** with the configured list — a typo
+  fails loudly instead of hitting the wrong QGIS.
+- **Each instance holds its own connection and lock**, so two windows
+  can be driven concurrently without serialising.
+- **Compound mode is incompatible.**  `QGIS_MCP_TOOL_MODE=compound`
+  registers grouped tools with no `instance` argument; configuring
+  more than one instance refuses to start rather than silently
+  routing every call to one QGIS.
+- **`PYTHONPATH` is still required** — without it `claude mcp list`
+  reports `✗ Failed to connect`, because the server crashes at import
+  before reaching any port logic.
+
+After registration, `/reload-plugins` is sufficient — no full restart.
+All instances share the one `mcp__qgis__*` tool family.
+
+Pre-0.7.2 setups registered the server once per port
+(`QGIS_MCP_PORT`, names like `qgis_9877`).  That still works but
+duplicates ~104 tool definitions per registration and leaves no way to
+tell from a tool name which QGIS a call will hit.
 
 **Per-profile gotcha**: the plugin saves its port choice in QSettings
 scoped to the QGIS user profile.  Two QGIS instances using the same
