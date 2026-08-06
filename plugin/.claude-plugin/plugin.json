@@ -1,11 +1,18 @@
 {
   "name": "pbs-gis",
-  "version": "0.17.0",
+  "version": "0.17.1",
   "description": "MCP tools for discovering pbs_gis API, recipes, and templates, plus safety skills for GIS/CAD development.",
   "author": {
     "name": "Gunther Schulz"
   },
   "repository": "https://github.com/Planungsburo-Schulz/pbs-gis",
   "license": "MIT",
-  "keywords": ["gis", "cad", "dxf", "geospatial", "workflow", "recipes"]
+  "keywords": [
+    "gis",
+    "cad",
+    "dxf",
+    "geospatial",
+    "workflow",
+    "recipes"
+  ]
 }

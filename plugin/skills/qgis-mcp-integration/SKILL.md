@@ -312,6 +312,7 @@ running — they all gracefully no-op when QGIS is unreachable.
 | Passing `None`/wrong type into a PyQGIS C++ call **crashes the whole QGIS process** (e.g. `QgsMapThemeCollection.createThemeFromCurrentState(root, None)`) | C++ binding, no Python type guard → segfault | Validate args before the call; build it incrementally; never pass `None` where an object is expected |
 | `layerTreeRoot().removeAllChildren()` **deletes the layers from the project**, not just the tree nodes | Layer-tree↔registry bridge drops a layer when its last tree node is removed | Reorder via `root.setCustomLayerOrder([...])`; never `removeAllChildren()` to reorder |
 | Layer renders at the wrong location after you regenerate its file in a different CRS | QGIS caches the layer's declared CRS from first load | `layer.dataProvider().reloadData(); layer.setCrs(new_crs)` after regenerating |
+| Every MCP call times out, `ss -tln` shows the listen port with its backlog full, QGIS idles near 0 % CPU | A modal dialog blocks the QGIS event loop (typical: "Handle Unavailable Layers" after `load_project` with unreachable WMS/WFS), so the plugin's QTimer server never accepts | Ask the user to dismiss the dialog in the QGIS UI — don't retry; queued calls complete once the loop is free |
 
 ## Architecture quick-reference
 
