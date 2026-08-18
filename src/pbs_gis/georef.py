@@ -55,6 +55,19 @@ class SimilarityTransform:
     n_inliers: int = 0
     source_crs: str | None = None
     reference_crs: str | None = None
+    #: Median residual (m) — the quantity a pre-registered "median <= x" fit
+    #: condition is judged on; ``rms`` answers a different question and a flat
+    #: optimum with a few huge residuals passes one while failing the other.
+    median_residual: float | None = None
+    #: Best/rank-n ratio of the fit criterion over the whole search space. A fit
+    #: without it is unjudgeable: a low residual at a flat optimum is a
+    #: coincidence with a number attached.
+    isolation: float | None = None
+    #: Fraction of source samples supported by a reference feature at the
+    #: optimum. Where only a subset of the source corresponds to the reference
+    #: (older cadastral state, generalized drawing), this — not a saturated
+    #: mean — is what carries the signal.
+    anchor_fraction: float | None = None
 
     @property
     def matrix(self) -> list[float]:
