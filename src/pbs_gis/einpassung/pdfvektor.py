@@ -64,7 +64,6 @@ DEFAULT_PAGE_SIZE_PT = (1190.55, 841.89)
 DEFAULT_FRAME_INSET_PT = 11.340222
 
 _NUM = re.compile(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?")
-_PAIR = re.compile(r"([-\d.]+)\s+([-\d.]+)")
 
 
 class EinpassungError(ValueError):
@@ -255,8 +254,13 @@ def read_svg_paths(
                 tf = _matmul(tf, tuple(m))
         if el.tag.split("}")[-1] == "path":
             a, b, c, d, e, f = tf
+            # Zahlen kommen über _NUM: ein Muster aus Ziffern, Punkt und
+            # Minus liest 1e3 als 1 und schneidet ein vorangestelltes
+            # Vorzeichen vom Wert ab — beides ergibt eine plausibel
+            # aussehende falsche Linie statt eines Fehlers.
+            werte = _NUM.findall(el.get("d") or "")
             pts = [(a * float(x) + c * float(y) + e, b * float(x) + d * float(y) + f)
-                   for x, y in _PAIR.findall(el.get("d") or "")]
+                   for x, y in zip(werte[0::2], werte[1::2])]
             if len(pts) >= min_points:
                 sw = el.get("stroke-width")
                 out.append(SvgPath(

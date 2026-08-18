@@ -231,3 +231,37 @@ def test_rahmen_toleranz_ist_parameter():
     punkt = [[2.0, 50.0]]
     assert not eng.near(punkt)[0]
     assert weit.near(punkt)[0]
+
+
+# --- Zahlen im d-Attribut ---------------------------------------------------
+# Der SVG-Weg ist laut read_svg_paths der Prüfstand-Eingang; hier trägt er die
+# Zahlenformen, die ein Export einer fremden Vorlage liefern kann, ohne dass
+# eine solche Vorlage im Repo liegen müsste.
+
+def _svg(tmp_path, d, name="p.svg"):
+    p = tmp_path / name
+    p.write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg">'
+        f'<g><path d="{d}" stroke="#000"/></g></svg>')
+    return p
+
+
+def test_exponentialschreibweise_wird_als_zahl_gelesen(tmp_path):
+    """Ein Muster aus Ziffern, Punkt und Minus zerschneidet 1e3 in 1 und 3."""
+    pts = read_svg_paths(_svg(tmp_path, "M 1e3 2e3 L 1.5e3 2e3"),
+                         page_height_pt=0.0)[0].points
+    assert np.allclose(pts, [[1000.0, -2000.0], [1500.0, -2000.0]])
+
+
+def test_vorzeichen_bleibt_am_wert(tmp_path):
+    """Ohne Trennzeichen vor dem Minus: -10-20 sind zwei Werte, nicht einer."""
+    pts = read_svg_paths(_svg(tmp_path, "M -10-20 L 30 40"),
+                         page_height_pt=0.0)[0].points
+    assert np.allclose(pts, [[-10.0, 20.0], [30.0, -40.0]])
+
+
+def test_reiner_polygonzug_bleibt_unveraendert(tmp_path):
+    """Neutralitätsprobe: der Normalfall liest sich wie zuvor."""
+    pts = read_svg_paths(_svg(tmp_path, "M 0 0 L 10 0 L 10 10 Z"),
+                         page_height_pt=0.0)[0].points
+    assert np.allclose(pts, [[0.0, 0.0], [10.0, 0.0], [10.0, -10.0]])
