@@ -5,8 +5,8 @@ Ein editable Install pinnt einen ABSOLUTEN Pfad (siehe
 einer Kopie dieses Repos, löst `import pbs_gis` trotzdem auf das ORIGINAL
 auf — ein in der Kopie injizierter Defekt liegt dann nie unter Prüfung,
 während `inspect.getsource` brav die Datei der Kopie zeigt und den Biss
-verschweigt (Vorfall FB 3.143, Beinahe-Fehlschluss beim FB-130-Gegenprobe-Bau
-am 18.08.).
+verschweigt. Genau dieser Aufbau kann den gesuchten Effekt nicht erzeugen und
+liefert trotzdem dasselbe Bild wie eine echte Entwarnung.
 
 Diese Zusicherung beantwortet zu Sammelbeginn genau eine Frage: liegt das
 importierte `pbs_gis` unter der Wurzel, aus der diese Suite läuft? Kein
