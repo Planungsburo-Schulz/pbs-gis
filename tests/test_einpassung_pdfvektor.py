@@ -265,3 +265,47 @@ def test_reiner_polygonzug_bleibt_unveraendert(tmp_path):
     pts = read_svg_paths(_svg(tmp_path, "M 0 0 L 10 0 L 10 10 Z"),
                          page_height_pt=0.0)[0].points
     assert np.allclose(pts, [[0.0, 0.0], [10.0, 0.0], [10.0, -10.0]])
+
+
+# --- Kurven-Pfade: laut, wo sie beitragen; still, wo sie verworfen werden ---
+# `pdftocairo` macht jede Beschriftung zu gefüllten Glyphen-Pfaden, und Glyphen
+# sind Kurven. Eine Sperre beim LESEN träfe deshalb jede beschriftete Seite.
+# Gesperrt wird darum ergebnis-seitig: ein markierter Pfad steuert nirgends
+# Stützpunkte bei. Je Konsument ein Paar — eine Richtung allein zählt nicht.
+
+_KURVE = 'd="M 100 100 C 200 200 300 200 400 100"'
+_GERADE = 'd="M 100 400 L 500 400 L 500 600"'
+_DASH_ATTR = f'stroke-dasharray="{DASH}"'
+
+
+def _svg_roh(tmp_path, koerper, name="mix.svg"):
+    p = tmp_path / name
+    p.write_text('<svg xmlns="http://www.w3.org/2000/svg"><g>'
+                 + koerper + '</g></svg>')
+    return p
+
+
+def test_kurve_wird_beim_lesen_nur_markiert(tmp_path):
+    """Das Lesen selbst wirft nie — sonst stirbt jede beschriftete Seite."""
+    paths = read_svg_paths(_svg_roh(tmp_path, f'<path {_KURVE} stroke="#000"/>'))
+    assert paths[0].fremd_kommando == "C"
+
+
+def test_polygonzug_bleibt_unmarkiert(tmp_path):
+    paths = read_svg_paths(_svg_roh(tmp_path, f'<path {_GERADE} stroke="#000"/>'))
+    assert paths[0].fremd_kommando is None
+
+
+def test_sheet_vectors_wirft_wenn_die_kurve_die_filter_passiert(tmp_path):
+    body = (f'<path {_GERADE} stroke="#000" stroke-width="1.73" {_DASH_ATTR}/>'
+            f'<path {_KURVE} stroke="#000" stroke-width="1.73"/>')
+    with pytest.raises(EinpassungError, match="Kommando 'C'"):
+        sheet_vectors(_svg_roh(tmp_path, body), 1, stroke_width_pt=1.73)
+
+
+def test_sheet_vectors_schweigt_wenn_die_kurve_ohnehin_rausfaellt(tmp_path):
+    """Der Glyphen-Fall: keine Strichstärke, also kein Beitrag, also still."""
+    body = (f'<path {_GERADE} stroke="#000" stroke-width="1.73" {_DASH_ATTR}/>'
+            f'<path {_KURVE} stroke="#000"/>')
+    sv = sheet_vectors(_svg_roh(tmp_path, body), 1, stroke_width_pt=1.73)
+    assert len(sv.kataster) == 1 and sv.leitung == []

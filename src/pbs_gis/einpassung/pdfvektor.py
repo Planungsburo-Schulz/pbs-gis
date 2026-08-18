@@ -48,6 +48,7 @@ __all__ = [
     "SvgPath",
     "chain_length",
     "dominant_stroke_width",
+    "fail_bei_fremdkommando",
     "m_per_pt",
     "read_svg_paths",
     "sheet_frame",
@@ -64,6 +65,11 @@ DEFAULT_PAGE_SIZE_PT = (1190.55, 841.89)
 DEFAULT_FRAME_INSET_PT = 11.340222
 
 _NUM = re.compile(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?")
+#: SVG-Pfadkommandos. ``e``/``E`` steht bewusst NICHT darin — es ist der
+#: Exponent einer Zahl, kein Kommando.
+_CMD = re.compile(r"[MmZzLlHhVvCcSsQqTtAa]")
+#: Kommandos, bei denen ALLE Zahlenpaare Stützpunkte des Zuges sind.
+_CMD_STUETZPUNKTE = frozenset("MLZmlz")
 
 
 class EinpassungError(ValueError):
@@ -74,6 +80,37 @@ class EinpassungError(ValueError):
     und wird erst am Endprodukt als Unsinn sichtbar, wo es niemand mehr der
     Stufe zuordnet.
     """
+
+
+def fail_bei_fremdkommando(path: "SvgPath", page: int, index: int) -> None:
+    """Wirft, wenn ein markierter Pfad Stützpunkte beitragen würde.
+
+    Aufzurufen an der Stelle, an der ein Pfad die Filter des Konsumenten
+    PASSIERT hat und in die Auswertung eingeht — nicht beim Lesen. Ein
+    Kurven-Pfad, den die Filter ohnehin verwerfen, trägt zu keinem Ergebnis
+    bei und bleibt darum still; das ist der Normalfall der Glyphen-Pfade,
+    zu denen ``pdftocairo`` jede Beschriftung macht.
+
+    Geht ein markierter Pfad dagegen ein, wandert Nicht-Geometrie als
+    Geometrie mit — eine plausibel aussehende falsche Linie, also genau das
+    stille Default-Ergebnis, gegen das der Grundsatz von
+    :class:`EinpassungError` geschrieben ist.
+
+    Args:
+        path: der Pfad, der gerade beitragen würde.
+        page: Seite, aus der er gelesen wurde.
+        index: seine Position in der von :func:`read_svg_paths` gelieferten
+            Liste (nicht die Pfad-Nummer im SVG — die Liste ist um Pfade
+            unter ``min_points`` gekürzt).
+    """
+    if path.fremd_kommando is None:
+        return
+    raise EinpassungError(
+        f"Seite {page}, Pfad {index} der gelesenen Pfade trägt das Kommando "
+        f"'{path.fremd_kommando}' und würde Stützpunkte beitragen — diese "
+        f"Stufe liest nur Polygonzüge (M/L/Z). Ein Plan MIT Kurven braucht "
+        f"einen echten Pfad-Parser und einen Goldstandard, an dem er sich "
+        f"messen lässt.")
 
 
 def m_per_pt(scale: float = 500.0) -> float:
@@ -101,6 +138,13 @@ class SvgPath:
     stroke_width_pt: float | None
     stroke: str
     dasharray: str
+    #: Erster Kommandobuchstabe außerhalb ``M/L/Z`` im ``d``-Attribut, sonst
+    #: ``None``. Bei einem markierten Pfad sind ``points`` NICHT die
+    #: Stützpunkte des gezeichneten Zuges: bei C/Q/S/T stehen
+    #: Bezier-Kontrollpunkte darin, bei A die Bogenparameter, bei H/V
+    #: verschiebt der Einzelwert die Paarung. Wer die Punkte auswertet, ruft
+    #: davor :func:`fail_bei_fremdkommando` — die Marke allein schützt nicht.
+    fremd_kommando: str | None = None
 
     @property
     def length_pt(self) -> float:
@@ -258,7 +302,8 @@ def read_svg_paths(
             # Minus liest 1e3 als 1 und schneidet ein vorangestelltes
             # Vorzeichen vom Wert ab — beides ergibt eine plausibel
             # aussehende falsche Linie statt eines Fehlers.
-            werte = _NUM.findall(el.get("d") or "")
+            geom = el.get("d") or ""
+            werte = _NUM.findall(geom)
             pts = [(a * float(x) + c * float(y) + e, b * float(x) + d * float(y) + f)
                    for x, y in zip(werte[0::2], werte[1::2])]
             if len(pts) >= min_points:
@@ -267,7 +312,10 @@ def read_svg_paths(
                     points=np.asarray([(x, page_height_pt - y) for x, y in pts], float),
                     stroke_width_pt=float(sw) if sw is not None else None,
                     stroke=el.get("stroke") or "",
-                    dasharray=el.get("stroke-dasharray") or ""))
+                    dasharray=el.get("stroke-dasharray") or "",
+                    fremd_kommando=next(
+                        (k for k in _CMD.findall(geom)
+                         if k not in _CMD_STUETZPUNKTE), None)))
         for ch in el:
             walk(ch, tf)
 
@@ -364,13 +412,14 @@ def sheet_vectors(
     k = m_per_pt(scale)
     kataster: list[np.ndarray] = []
     leitung: list[np.ndarray] = []
-    for p in paths:
+    for i, p in enumerate(paths):
         if p.stroke_width_pt is None:
             continue
         if abs(p.stroke_width_pt - stroke_width_pt) > stroke_width_tol:
             continue
         if exclude_stroke is not None and exclude_stroke in p.stroke:
             continue
+        fail_bei_fremdkommando(p, page, i)
         pts = p.points * k
         (kataster if _dash_equal(_parse_dash(p.dasharray), want) else leitung).append(pts)
 

@@ -42,6 +42,7 @@ from pbs_gis.einpassung.pdfvektor import (
     DEFAULT_PAGE_SIZE_PT,
     EinpassungError,
     SheetFrame,
+    fail_bei_fremdkommando,
     m_per_pt,
     read_svg_paths,
 )
@@ -274,8 +275,9 @@ def overview_vertices(
     want = _parse_dash(dasharray)
     paths = read_svg_paths(source, page, page_height_pt=page_size_pt[1])
     keep = []
-    for p in paths:
+    for i, p in enumerate(paths):
         if _dash_equal(_parse_dash(p.dasharray), want):
+            fail_bei_fremdkommando(p, page, i)
             keep.append(p.points)
             continue
         if exclude_stroke is not None and exclude_stroke in p.stroke:
@@ -285,6 +287,7 @@ def overview_vertices(
                     abs(p.stroke_width_pt - w) <= stroke_width_tol
                     for w in solid_stroke_widths_pt):
                 continue
+        fail_bei_fremdkommando(p, page, i)
         keep.append(p.points)
     if not keep:
         raise EinpassungError(
@@ -490,9 +493,10 @@ def sheet_cut_rectangles(
     paths = read_svg_paths(src, page, page_height_pt=page_size_pt[1],
                            min_points=min_points)
     rects_all = []
-    for p in paths:
+    for i, p in enumerate(paths):
         if rect_stroke not in p.stroke:
             continue
+        fail_bei_fremdkommando(p, page, i)
         X, Y = p.points[:, 0], p.points[:, 1]
         rects_all.append((float(X.min()), float(Y.min()), float(X.max()), float(Y.max())))
     if not rects_all:

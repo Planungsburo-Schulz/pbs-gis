@@ -310,3 +310,51 @@ def test_overview_vertices_wirft_ohne_kandidaten(tmp_path):
                               [synthplan.polyline([(100, 100), (300, 100)], width=9.0)])
     with pytest.raises(EinpassungError, match="keine Kandidatenpunkte"):
         overview_vertices(pdf, 1)
+
+
+# --- Kurven-Pfade in den beiden Blattverbund-Konsumenten -------------------
+# Beide lesen über read_svg_paths und filtern anders als sheet_vectors: hier
+# behält `solid_stroke_widths_pt=None` ALLES, und die Rechteck-Sammlung bildet
+# die Umhüllende, wo ein Bezier-Kontrollpunkt den Rahmen still aufbliese.
+# Gesperrt wird darum dort, wo der Pfad beiträgt — nicht beim Lesen.
+
+_KURVE = 'd="M 100 100 C 200 200 300 200 400 100"'
+_GERADE = 'd="M 100 400 L 500 400 L 500 600"'
+_RAHMENFARBE = 'stroke="rgb(0%, 0%, 100%)"'
+
+
+def _svg_roh(tmp_path, koerper, name="mix.svg"):
+    p = tmp_path / name
+    p.write_text('<svg xmlns="http://www.w3.org/2000/svg"><g>'
+                 + koerper + '</g></svg>')
+    return p
+
+
+def test_overview_vertices_wirft_wenn_alles_behalten_wird(tmp_path):
+    """`solid_stroke_widths_pt=None` nimmt alle Stärken — auch die Kurve."""
+    body = (f'<path {_GERADE} stroke="#000" stroke-width="1.73"/>'
+            f'<path {_KURVE} stroke="#000"/>')
+    with pytest.raises(EinpassungError, match="Kommando 'C'"):
+        overview_vertices(_svg_roh(tmp_path, body), 1, solid_stroke_widths_pt=None)
+
+
+def test_overview_vertices_schweigt_wenn_die_staerkenwahl_die_kurve_verwirft(tmp_path):
+    body = (f'<path {_GERADE} stroke="#000" stroke-width="1.73"/>'
+            f'<path {_KURVE} stroke="#000"/>')
+    V = overview_vertices(_svg_roh(tmp_path, body), 1,
+                          solid_stroke_widths_pt=(1.73,))
+    assert len(V) == 3
+
+
+def test_sheet_cut_rectangles_wirft_bei_kurve_in_rahmenfarbe(tmp_path):
+    body = f'<path {_KURVE} {_RAHMENFARBE} stroke-width="0.5"/>'
+    with pytest.raises(EinpassungError, match="Kommando 'C'"):
+        sheet_cut_rectangles(_svg_roh(tmp_path, body), 1)
+
+
+def test_sheet_cut_rectangles_schweigt_bei_kurve_anderer_farbe(tmp_path):
+    """Die Kurve fällt am Farbfilter — der Lauf klagt über den FEHLENDEN
+    Blattschnitt, nicht über das Kommando. Das ist die stille Richtung."""
+    body = f'<path {_KURVE} stroke="#000" stroke-width="0.5"/>'
+    with pytest.raises(EinpassungError, match="kein Pfad mit Rahmenfarbe"):
+        sheet_cut_rectangles(_svg_roh(tmp_path, body), 1)
