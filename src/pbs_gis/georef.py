@@ -12,12 +12,21 @@ Robust pipeline: build candidate correspondences by area similarity ->
 RANSAC over correspondence pairs (similarity from 2 points) -> Umeyama
 least-squares refine over inliers. Dependency-light (numpy + shapely only).
 
+``wfs.download`` erwartet in ``layer`` einen FEATURE-TYPE, keinen Rezept-Alias:
+bei einem Mehrlayer-Rezept liefert ein durchgereichter Alias kommentarlos die
+Default-Ebene des Dienstes — nach ``"gebaeude"`` gefragt, Flurstücke bekommen.
+Den Alias löst ``get_layer_recipe`` auf.
+
 Example
 -------
 >>> from pbs_gis import extract_dxf_layers, wfs, georef
+>>> from pbs_gis.recipes import load_recipe
 >>> dxf = extract_dxf_layers("plan.dxf", "EPSG:25832")
->>> ref_fl = wfs.download(None, "flurstuecke", recipe="th_alkis", extent=bbox, crs="EPSG:25832")
->>> ref_gb = wfs.download(None, "gebaeude",    recipe="th_alkis", extent=bbox, crs="EPSG:25832")
+>>> alkis = load_recipe("th_alkis")          # Mehrlayer-Rezept: Alias -> Layer-Rezept
+>>> ref_fl = wfs.download(None, "", recipe=alkis.get_layer_recipe("flurstuecke"),
+...                       extent=bbox, crs="EPSG:25832")
+>>> ref_gb = wfs.download(None, "", recipe=alkis.get_layer_recipe("gebaeude"),
+...                       extent=bbox, crs="EPSG:25832")
 >>> T = georef.register_features(
 ...     source=[dxf["K-Flurstueck"]["Polygon"], dxf["K-GebaeudeBauwerk"]["Polygon"]],
 ...     reference=[ref_fl, ref_gb], snap_translation=True)
