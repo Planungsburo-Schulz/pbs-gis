@@ -19,15 +19,31 @@ _MODULES = [
     "pbs_gis.geometry",  # geometry utilities
     "pbs_gis.operations", # ported vector ops (cleaning, filter, connect, dissolve-by-majority)
     "pbs_gis.reporting", # area reports, markdown tables
+    "pbs_gis.md_table",  # markdown table formatting
+    "pbs_gis.maps",      # quick map rendering for GeoDataFrames
     "pbs_gis.alkis",     # Flurstück lookup
+    "pbs_gis.atkis",     # ATKIS Basis-DLM classification-aware retrieval
     "pbs_gis.georef",    # feature-match georeferencing (DXF/local -> reference CRS)
     "pbs_gis.einpassung.pdfvektor",    # Einpassung Mechanismus 1 — Struktur aus PDF-Vektoren
     "pbs_gis.einpassung.blattverbund", # Einpassung Mechanismen 2-4 — Blattverbund
     "pbs_gis.einpassung.fit",          # Einpassung Mechanismus 5 — Fit, ICP, Isolation
+    "pbs_gis.dxf.read",       # CAD input reading (.dxf/.dwg -> ezdxf document)
     "pbs_gis.dxf.extract",   # DXF extraction
     "pbs_gis.dxf.convert",   # SHP→DXF conversion
     "pbs_gis.dxf.document",  # DXF document creation
     "pbs_gis.dxf.map_od",    # AutoCAD Map Object Data
+    "pbs_gis.cad.emit",       # CAD emitter — styled GPKG → DXF export core
+    "pbs_gis.cad.styles",     # CAD emitter — strict cad_styles.yaml schema/loader
+    "pbs_gis.cad.colors",     # CAD emitter — ACI colour resolution
+    "pbs_gis.cad.annotate",   # CAD emitter — block/text (MTEXT) insertion
+    "pbs_gis.cad.legend",     # CAD emitter — DXF legend
+    "pbs_gis.cad.path_array", # CAD emitter — block references along a path
+    "pbs_gis.cad.viewport",   # CAD emitter — paperspace viewports
+    "pbs_gis.grass",     # GRASS-session centerline extraction script
+    "pbs_gis.ops_pipeline", # declarative geometry-op pipelines (ops: workflow step)
+    "pbs_gis.manifest",  # Stand-Manifest emission for published workflow artefacts
+    "pbs_gis.qgis_bridge",  # optional live bridge to a running QGIS instance (qgis-mcp)
+    "pbs_gis.qgis_catalog", # QGIS config WMS/WFS/WCS connection lookup (recipes qgis_name)
     "pbs_gis.runner",    # workflow runner
     "pbs_gis.templates", # built-in workflow templates
 ]
