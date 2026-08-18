@@ -54,6 +54,23 @@ from pbs_gis.reporting import (
 )
 from pbs_gis.alkis import find_flurstuecke
 from pbs_gis.georef import register_features, SimilarityTransform
+from pbs_gis.einpassung import (
+    EinpassungError,
+    apply_points,
+    chain_over_overview,
+    chamfer_field,
+    coarse_fit,
+    compose,
+    icp_helmert,
+    isolation,
+    overview_vertices,
+    reference_rings,
+    resample,
+    sample_rings,
+    sheet_mosaic,
+    sheet_vectors,
+    vertices,
+)
 from pbs_gis.atkis import fetch_classified_features, fetch_classified_guide
 from pbs_gis.catalog import catalog
 from pbs_gis.maps import quick_map
@@ -129,6 +146,22 @@ __all__ = [
     # Georeferencing (feature-match similarity transform)
     "register_features",
     "SimilarityTransform",
+    # Lageplan-Einpassung (mehrblättriger Plan ohne Koordinaten -> CRS)
+    "EinpassungError",
+    "sheet_vectors",
+    "vertices",
+    "sheet_mosaic",
+    "overview_vertices",
+    "chain_over_overview",
+    "reference_rings",
+    "sample_rings",
+    "chamfer_field",
+    "coarse_fit",
+    "icp_helmert",
+    "compose",
+    "isolation",
+    "apply_points",
+    "resample",
     # ATKIS classification cascade
     "fetch_classified_features",
     "fetch_classified_guide",

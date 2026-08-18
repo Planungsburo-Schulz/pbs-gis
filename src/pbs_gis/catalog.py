@@ -21,6 +21,9 @@ _MODULES = [
     "pbs_gis.reporting", # area reports, markdown tables
     "pbs_gis.alkis",     # Flurstück lookup
     "pbs_gis.georef",    # feature-match georeferencing (DXF/local -> reference CRS)
+    "pbs_gis.einpassung.pdfvektor",    # Einpassung Mechanismus 1 — Struktur aus PDF-Vektoren
+    "pbs_gis.einpassung.blattverbund", # Einpassung Mechanismen 2-4 — Blattverbund
+    "pbs_gis.einpassung.fit",          # Einpassung Mechanismus 5 — Fit, ICP, Isolation
     "pbs_gis.dxf.extract",   # DXF extraction
     "pbs_gis.dxf.convert",   # SHP→DXF conversion
     "pbs_gis.dxf.document",  # DXF document creation
