@@ -21,7 +21,7 @@ Werkzeug: `pbs_gis.einpassung` (Mechanismen 1–5), Referenz über `pbs_gis.wfs`
 
 ### Reihenfolge — das IST der Mechanismus
 
-**Struktur → Blattverbund → robuster Fit → ICP → Isolation → Export.** Der Blattverbund macht aus neun schwachen Einzeloptima ein starres System. Ein Einzelblatt direkt gegen ALKIS zu fitten hat im Ursprungsfall siebenmal versagt.
+**Struktur → Blattverbund → robuster Fit → ICP → Isolation.** Diese fünf Schritte liefert `pbs_gis.einpassung`; sein Ergebnis ist der ausgewiesene Transform, nicht die geschriebene Datei. **Das Herausschreiben der eingepassten Geometrie ist Handarbeit des Bearbeiters** — `apply_points` auf Leitung und Signatur, Schreib-Weg nach dem Beleg (RUNBOOK RL-E). Der Blattverbund macht aus neun schwachen Einzeloptima ein starres System. Ein Einzelblatt direkt gegen ALKIS zu fitten hat im Ursprungsfall siebenmal versagt.
 
 ```python
 from pbs_gis.einpassung import (

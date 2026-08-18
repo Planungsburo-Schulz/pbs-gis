@@ -1,6 +1,6 @@
 {
   "name": "pbs-gis",
-  "version": "0.18.0",
+  "version": "0.18.1",
   "description": "MCP tools for discovering pbs_gis API, recipes, and templates, plus safety skills for GIS/CAD development.",
   "author": {
     "name": "Gunther Schulz"
