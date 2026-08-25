@@ -105,3 +105,15 @@ def test_leerer_rahmen() -> None:
     aus, info = smooth_partition(leer, "klasse")
 
     assert len(aus) == 0
+
+
+def test_ergebnis_enthaelt_nur_flaechen(partition) -> None:
+    """Der Zuschnitt aufs Gebiet hinterlässt Linien und Punkte, wo eine Fläche den
+    Rand nur berührt. Sie haben null Fläche und fallen in keiner Bilanz auf —
+    aber jede Weiterverarbeitung, die Polygone erwartet, bricht daran ab."""
+    gdf, gebiet = partition
+
+    aus, _ = smooth_partition(gdf, "klasse", clip=gebiet, toleranz_m=0.5, runden=2)
+
+    assert set(aus.geom_type) <= {"Polygon", "MultiPolygon"}
+    assert (aus.area > 0).all()

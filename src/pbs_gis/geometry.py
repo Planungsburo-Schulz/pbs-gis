@@ -1230,7 +1230,12 @@ def smooth_partition(
 
     schluessel = [s for s in aus.columns if s != "geometry"]
     aus = aus.dissolve(by=schluessel, as_index=False).explode(index_parts=False)
-    aus = aus[~aus.geometry.is_empty].reset_index(drop=True)
+    # Der Zuschnitt aufs Gebiet kann Linien und Punkte hinterlassen, wo eine
+    # Fläche den Rand nur berührt. Sie tragen null Fläche, bleiben aber im Layer
+    # und lassen jede Weiterverarbeitung stolpern, die Polygone erwartet —
+    # gemessen: 36 solcher Reste in einer Karte mit 70 echten Flächen.
+    aus = aus[aus.geom_type.isin(["Polygon", "MultiPolygon"])]
+    aus = aus[~aus.geometry.is_empty & (aus.area > 0)].reset_index(drop=True)
 
     vereinigt = unary_union(list(aus.geometry))
     info = {
