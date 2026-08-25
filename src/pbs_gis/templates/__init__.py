@@ -80,6 +80,7 @@ from pbs_gis.templates import (  # noqa: E402, F401
     concentric_point_buffers,
     distance_lines_to_nearest,
     dxf_extract_layers,
+    dxf_hatch_areas,
     dxf_lines_to_polygon,
     dxf_subset,
     dxf_verification,

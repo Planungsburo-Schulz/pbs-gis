@@ -21,6 +21,7 @@ dependencies = [
     "scikit-image",
     "matplotlib",
     "pyyaml>=6.0",
+    "openpyxl>=3.1.5",
 ]
 
 [project.optional-dependencies]
