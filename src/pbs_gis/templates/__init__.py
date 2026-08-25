@@ -81,6 +81,7 @@ from pbs_gis.templates import (  # noqa: E402, F401
     distance_lines_to_nearest,
     dxf_extract_layers,
     dxf_lines_to_polygon,
+    dxf_subset,
     dxf_verification,
     fetch_flurstuecke,
     layout_from_qpt,

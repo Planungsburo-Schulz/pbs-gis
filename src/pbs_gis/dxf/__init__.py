@@ -16,6 +16,7 @@ from pbs_gis.dxf.map_od import (
     encode_od_1004,
     get_table_handle_by_name,
 )
+from pbs_gis.dxf.subset import dxf_subset
 from pbs_gis.dxf.read import (
     CAD_SUFFIXES,
     CadReadError,
@@ -35,6 +36,7 @@ __all__ = [
     "save_layers_as_shapefiles",
     "read_cad",
     "dwg_to_dxf",
+    "dxf_subset",
     "is_dwg_supported",
     "CadReadError",
     "CAD_SUFFIXES",
