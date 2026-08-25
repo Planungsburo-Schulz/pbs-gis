@@ -3,7 +3,7 @@
 from pbs_gis.md_table import markdown_table
 from pbs_gis.dxf.convert import shapefile_to_dxf
 from pbs_gis.dxf.document import new_dxf_document, ensure_layer
-from pbs_gis.dxf.subset import dxf_subset
+from pbs_gis.dxf.subset import dxf_subset, dxf_subset_from_sources
 from pbs_gis.dxf.extract import (
     extract_3dsolids,
     extract_dxf_circles,
@@ -102,6 +102,7 @@ __all__ = [
     # DXF conversion
     "shapefile_to_dxf",
     "dxf_subset",
+    "dxf_subset_from_sources",
     # DXF Map Object Data
     "OD_EXTENSION_DICT_KEY",
     "attach_od_to_entity",

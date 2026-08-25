@@ -15,7 +15,7 @@ import ezdxf
 import pytest
 
 from pbs_gis.dxf.read import CadReadError
-from pbs_gis.dxf.subset import dxf_subset
+from pbs_gis.dxf.subset import dxf_subset, dxf_subset_from_sources
 
 
 @pytest.fixture()
@@ -98,7 +98,7 @@ def test_subset_rejects_a_layer_the_source_does_not_have(
 
 
 def test_subset_rejects_an_empty_layer_list(source_dxf: Path, tmp_path: Path) -> None:
-    with pytest.raises(CadReadError, match="at least one layer"):
+    with pytest.raises(CadReadError, match="No layers requested"):
         dxf_subset(source_dxf, tmp_path / "subset.dxf", [])
 
 
@@ -112,3 +112,52 @@ def test_subset_refuses_to_overwrite_without_replace(
         dxf_subset(source_dxf, dest, ["WORK_LINES"])
 
     assert dxf_subset(source_dxf, dest, ["WORK_LINES"], replace=True) == dest
+
+
+# --- several sources ---------------------------------------------------------
+
+@pytest.fixture()
+def second_dxf(tmp_path: Path) -> Path:
+    """A second drawing, as an xref bundle splits a plan by trade."""
+    doc = ezdxf.new("R2010")
+    doc.layers.add("PG_BOUNDARY", color=2)
+    doc.layers.add("WORK_LINES", color=1)  # name also used by source_dxf
+    doc.modelspace().add_lwpolyline(
+        [(0, 0), (100, 0), (100, 100), (0, 100)],
+        close=True,
+        dxfattribs={"layer": "PG_BOUNDARY"},
+    )
+    path = tmp_path / "second.dxf"
+    doc.saveas(path)
+    return path
+
+
+def test_subset_gathers_layers_from_several_sources(
+    source_dxf: Path, second_dxf: Path, tmp_path: Path
+) -> None:
+    out = dxf_subset_from_sources(
+        [(source_dxf, ["WORK_LINES"]), (second_dxf, ["PG_BOUNDARY"])],
+        tmp_path / "subset.dxf",
+    )
+
+    doc = ezdxf.readfile(out)
+    layers = {e.dxf.layer for e in doc.modelspace()}
+    assert layers == {"WORK_LINES", "PG_BOUNDARY"}
+    assert len(doc.modelspace().query("LWPOLYLINE")) == 3  # 2 + the boundary
+
+
+def test_subset_rejects_one_layer_name_claimed_by_two_sources(
+    source_dxf: Path, second_dxf: Path, tmp_path: Path
+) -> None:
+    """Merged silently, the target layer holds entities from a file nobody
+    expected, and the drawing looks correct."""
+    with pytest.raises(CadReadError, match="two sources"):
+        dxf_subset_from_sources(
+            [(source_dxf, ["WORK_LINES"]), (second_dxf, ["WORK_LINES"])],
+            tmp_path / "subset.dxf",
+        )
+
+
+def test_subset_rejects_a_source_without_layers(source_dxf: Path, tmp_path: Path) -> None:
+    with pytest.raises(CadReadError, match="No layers requested"):
+        dxf_subset_from_sources([(source_dxf, [])], tmp_path / "subset.dxf")

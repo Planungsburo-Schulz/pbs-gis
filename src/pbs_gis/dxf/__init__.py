@@ -16,7 +16,7 @@ from pbs_gis.dxf.map_od import (
     encode_od_1004,
     get_table_handle_by_name,
 )
-from pbs_gis.dxf.subset import dxf_subset
+from pbs_gis.dxf.subset import dxf_subset, dxf_subset_from_sources
 from pbs_gis.dxf.read import (
     CAD_SUFFIXES,
     CadReadError,
@@ -37,6 +37,7 @@ __all__ = [
     "read_cad",
     "dwg_to_dxf",
     "dxf_subset",
+    "dxf_subset_from_sources",
     "is_dwg_supported",
     "CadReadError",
     "CAD_SUFFIXES",
