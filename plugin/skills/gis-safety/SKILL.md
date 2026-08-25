@@ -26,6 +26,29 @@ When styling outputs over a basemap (DOP, ALKIS):
 - **One colour = one role.** Reserve one high-contrast colour for the *alert* role — the conflict/result the map exists to show — and use it for nothing else (not the fence, not a boundary).
 - **Distinguish by hue, not by stacked alpha.** Semi-transparent fills let the basemap read through, but several transparent fills of similar hue stacked together turn muddy and unreadable. One role → one hue.
 
+### Basemaps: official survey data before commercial tiles
+
+**Where an official source exists, it is the one used.** DOP for imagery, ALKIS for
+parcels, ATKIS for topography — recipes exist per Bundesland (`mv_dop`, `ni_dop`,
+`sh_dop20`, `th_dop20`; `list_recipes(search="dop")`). Google, Bing and Esri tiles are
+an exploration convenience and three separate problems in a deliverable: their licence
+does not cover reproduction in a plan, they are not survey-accurate, and their imagery
+carries no documented date, so nothing measured against them can be cited.
+
+The failure is quiet and it compounds: a commercial layer added once as a quick backdrop
+stays in the project file and rides into every later map, and nothing asks about it —
+measured across the office's projects, 31 of 40 QGIS project folders carried one.
+
+- **Adding a backdrop**: reach for the state's DOP recipe first. Only if none exists for
+  that state does a commercial tile service come into question.
+- **Opening an existing project**: a commercial layer already in it is a finding to
+  raise, not inherited furniture. Say so before building on top of it.
+- **Deliberate exception**: declare it in `workflow.yaml` as
+  `project: basemap_exception: "<reason>"`. The check reads the reason and goes quiet.
+- **Mechanism**: `gis-workflow check-basemap [dir]` names every commercial layer and the
+  official recipes that replace it; `gis-workflow run` reports the same at the end of
+  each run. It matches the tile HOST, so a layer renamed "Luftbild" is still caught.
+
 ### Validate inputs and outputs — don't assume
 
 - **Layer mapping by geometry, not name**: before using a named layer, confirm it actually holds the expected geometry (type, area, count). Names mislead — a "fence" layer may carry only dimensioning, a "components" layer may be a 0.3 m² stub. Surface any mismatch instead of proceeding.

@@ -693,6 +693,35 @@ def _run_check_recipes(recipe_name: str | None, project_dir: str) -> None:
             print("  All layers up to date.")
 
 
+def _run_check_basemap(project_dir: str, *, quiet_when_clean: bool = False) -> bool:
+    """Report commercial basemaps in a project. True when nothing is to report."""
+    from pbs_gis.basemap import (declared_exception, find_commercial_basemaps,
+                                 official_aerial_recipes)
+
+    hits = find_commercial_basemaps(project_dir)
+    if not hits:
+        if not quiet_when_clean:
+            print("Keine kommerziellen Kartendienste in den QGIS-Projekten gefunden.")
+        return True
+
+    reason = declared_exception(project_dir)
+    kopf = "Kommerzieller Kartendienst als Grundlage:"
+    print(f"\n  {kopf}")
+    for hit in hits:
+        print(f"    {hit}")
+
+    if reason:
+        print(f"    -> erklaerte Ausnahme (workflow.yaml): {reason}")
+        return True
+
+    amtlich = official_aerial_recipes()
+    print("    -> Amtliche Luftbilder sind vorhanden und gehen vor:")
+    for name, desc in amtlich:
+        print(f"       {name:12} {desc}")
+    print("       Begruendete Ausnahme: workflow.yaml, project: basemap_exception: \"...\"")
+    return False
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="GIS project workflow runner.",
@@ -727,6 +756,15 @@ def main():
         help="Project directory (default: current directory)",
     )
 
+    # `gis-workflow check-basemap`
+    basemap_parser = subparsers.add_parser(
+        "check-basemap",
+        help="Find commercial web-map tiles used where an official source exists")
+    basemap_parser.add_argument(
+        "project_dir", nargs="?", default=".",
+        help="Project directory (default: current directory)",
+    )
+
     # `gis-workflow catalog`
     cat_parser = subparsers.add_parser("catalog", help="Print library catalog as JSON")
     cat_parser.add_argument("--search", "-q", default=None, help="Filter by keyword")
@@ -751,6 +789,9 @@ def main():
         _run_check_recipes(args.recipe_name, args.project_dir)
         return
 
+    if args.command == "check-basemap":
+        sys.exit(0 if _run_check_basemap(args.project_dir) else 1)
+
     if args.command == "catalog":
         from pbs_gis.catalog import catalog as _catalog
         result = _catalog(search=args.search, project_dir=args.project_dir)
@@ -763,6 +804,10 @@ def main():
         dry_run=args.dry_run,
         conda_env=args.env,
     )
+    if not args.dry_run:
+        # Findet den stillen Fall: ein kommerzieller Hintergrund, den irgendwann
+        # jemand als Behelf einlud und den seither niemand mehr hinterfragt hat.
+        _run_check_basemap(args.project_dir, quiet_when_clean=True)
     sys.exit(0 if ok else 1)
 
 

@@ -44,6 +44,7 @@ _MODULES = [
     "pbs_gis.grass",     # GRASS-session centerline extraction script
     "pbs_gis.ops_pipeline", # declarative geometry-op pipelines (ops: workflow step)
     "pbs_gis.manifest",  # Stand-Manifest emission for published workflow artefacts
+    "pbs_gis.basemap",   # commercial-basemap check (official sources first)
     "pbs_gis.qgis_bridge",  # optional live bridge to a running QGIS instance (qgis-mcp)
     "pbs_gis.qgis_catalog", # QGIS config WMS/WFS/WCS connection lookup (recipes qgis_name)
     "pbs_gis.runner",    # workflow runner
