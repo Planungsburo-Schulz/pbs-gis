@@ -869,6 +869,59 @@ def _extract_polygons(geom) -> list[Polygon]:
     return []
 
 
+def _zackigkeit(geom) -> float:
+    """Richtungswechsel je Meter Rand — das Mass für „sieht zackig aus".
+
+    Stützpunktzahl allein taugt nicht: Rundung fügt Punkte HINZU, um eine Kurve
+    zu bilden, und macht das Ergebnis trotzdem ruhiger.
+    """
+    import math
+
+    teile = geom.geoms if hasattr(geom, "geoms") else [geom]
+    winkel_summe = 0.0
+    laenge = 0.0
+    for t in teile:
+        if t.geom_type != "Polygon":
+            continue
+        for ring in [t.exterior, *t.interiors]:
+            c = list(ring.coords)
+            laenge += ring.length
+            for i in range(1, len(c) - 1):
+                (x0, y0), (x1, y1), (x2, y2) = c[i - 1], c[i], c[i + 1]
+                a1 = math.atan2(y1 - y0, x1 - x0)
+                a2 = math.atan2(y2 - y1, x2 - x1)
+                d = abs((a2 - a1 + math.pi) % (2 * math.pi) - math.pi)
+                winkel_summe += d
+    return winkel_summe / laenge if laenge else 0.0
+
+
+def _zackigkeit_gesamt(geoms) -> float:
+    """Richtungswechsel je Meter über ALLE Ränder zusammen.
+
+    Als Mittel der Einzelwerte ist die Kennzahl unbrauchbar: ein Splitter hat
+    winzige Randlänge, sein Quotient explodiert und beherrscht den Mittelwert
+    (gemessen: 6192 statt 3,4). Summe durch Summe bleibt stabil.
+    """
+    import math
+
+    winkel, laenge = 0.0, 0.0
+    for geom in geoms:
+        if geom is None or geom.is_empty:
+            continue
+        for t in (geom.geoms if hasattr(geom, "geoms") else [geom]):
+            if t.geom_type != "Polygon":
+                continue
+            for ring in [t.exterior, *t.interiors]:
+                c = list(ring.coords)
+                laenge += ring.length
+                for i in range(1, len(c) - 1):
+                    (x0, y0), (x1, y1), (x2, y2) = c[i - 1], c[i], c[i + 1]
+                    a1 = math.atan2(y1 - y0, x1 - x0)
+                    a2 = math.atan2(y2 - y1, x2 - x1)
+                    winkel += abs((a2 - a1 + math.pi) % (2 * math.pi) - math.pi)
+    return winkel / laenge if laenge else 0.0
+
+
 def _chaikin_ring(coords: list[tuple[float, float]], runden: int) -> list[tuple[float, float]]:
     """Chaikins Eckenabschnitt auf einem geschlossenen Ring."""
     punkte = list(coords[:-1]) if coords[0] == coords[-1] else list(coords)
@@ -980,3 +1033,213 @@ def smooth_polygons(
         "stuetzpunkte_nachher": int(sum(stuetzpunkte(g) for g in aus.geometry)),
     }
     return aus.reset_index(drop=True), info
+
+
+def _chaikin_linie(coords: list[tuple[float, float]], runden: int) -> list[tuple[float, float]]:
+    """Chaikin auf einer offenen Linie; Anfang und Ende bleiben, wo sie sind.
+
+    Die Endpunkte sind Knoten des Netzes — verschieben sie sich, reissen die
+    Nachbarflächen auf, und genau das soll die Partitionsglättung verhindern.
+    """
+    punkte = list(coords)
+    if len(punkte) < 3:
+        return punkte
+    for _ in range(runden):
+        neu = [punkte[0]]
+        for i in range(len(punkte) - 1):
+            (x0, y0), (x1, y1) = punkte[i], punkte[i + 1]
+            neu.append((0.75 * x0 + 0.25 * x1, 0.75 * y0 + 0.25 * y1))
+            neu.append((0.25 * x0 + 0.75 * x1, 0.25 * y0 + 0.75 * y1))
+        neu.append(punkte[-1])
+        punkte = neu
+    return punkte
+
+
+def smooth_partition(
+    gdf,
+    klasse_spalte: str,
+    *,
+    clip=None,
+    toleranz_m: float = 0.4,
+    runden: int = 2,
+    min_flaeche_m2: float = 3.0,
+    raster_m: float | None = None,
+):
+    """Eine flächendeckende Klassenkarte glätten, ohne Lücken zu reissen.
+
+    :func:`smooth_polygons` behandelt jede Fläche für sich — bei einer
+    PARTITION, in der die Flächen aneinandergrenzen, schrumpfen benachbarte
+    Ränder dabei voneinander weg. Gemessen an einer realen Bestandskarte: 274 m²
+    Lücke in 119 Spalten von rund 0,45 m Breite, dazu 73 m² Überlappung, obwohl
+    die Eingabe lückenlos war. Im GIS ist so eine Karte kaputt: Flächen summieren
+    sich nicht mehr auf ihr Gebiet, und jede Verschneidung erbt die Spalten.
+
+    Deshalb wird hier nicht die Fläche geglättet, sondern das GRENZNETZ: alle
+    Ränder werden zu einem Liniennetz vereinigt (dabei an jeder Kreuzung
+    aufgetrennt), jede Kante für sich geglättet — mit festgehaltenen Endpunkten,
+    damit die Knoten bleiben —, und aus dem geglätteten Netz werden die Flächen
+    neu gebildet. Was zusammengehörte, grenzt danach wieder exakt aneinander.
+
+    Args:
+        gdf: GeoDataFrame mit aneinandergrenzenden Polygonen.
+        klasse_spalte: Spalte, die die Klasse trägt; sie wird über den
+            Repräsentativpunkt der neuen Flächen übernommen.
+        clip: Gebiet, das die Partition ausfüllt (dessen Rand ist Teil des
+            Netzes). ``None`` nimmt die Aussenhülle der Eingabe.
+        toleranz_m: Douglas-Peucker-Toleranz je Kante.
+        runden: Chaikin-Durchläufe je Kante.
+        min_flaeche_m2: Splitter darunter werden dem grössten Nachbarn
+            zugeschlagen statt weggeworfen — wegwerfen risse wieder Lücken.
+        raster_m: Gitterweite, auf die die Eingabe vor der Netzbildung
+            einrastet. ``None`` nimmt die halbe Toleranz. Ohne diesen Schritt
+            zerfällt das Netz einer Rasterklassifikation in Mikrokanten, an
+            denen keine Vereinfachung greift.
+
+    Returns:
+        ``(GeoDataFrame, info)`` mit ``luecke_m2``, ``ueberlappung_m2`` und den
+        Stützpunktzahlen. Bei einer sauberen Partition ist beides nahe null.
+    """
+    import geopandas as gpd
+    import numpy as np
+    from shapely.geometry import LineString, MultiLineString
+    from shapely.ops import linemerge, polygonize, unary_union
+
+    if gdf.empty:
+        return gdf.copy(), {"luecke_m2": 0.0, "ueberlappung_m2": 0.0}
+
+    if raster_m is None:
+        raster_m = toleranz_m / 2
+
+    # Vor jeder Veränderung messen: sonst weist die Kennzahl die Wirkung des
+    # Einrastens nicht aus und das Verfahren schönt sich selbst.
+    zackig_vorher = _zackigkeit_gesamt(list(gdf.geometry))
+
+    # Entartete Flächen aussortieren: aus Verschmelzen und Explodieren fallen
+    # Splitter ohne Fläche, deren Rand keine Linie mehr ist (gemessen: 59 von
+    # 108). Sie tragen nichts bei und lassen das Verketten der Kanten abbrechen.
+    gdf = gdf[gdf.geometry.notna()].copy()
+    gdf["geometry"] = gdf.geometry.buffer(0)
+    gdf = gdf[(gdf.geom_type.isin(["Polygon", "MultiPolygon"]))
+              & (gdf.area > 1e-6) & gdf.geometry.is_valid]
+    if gdf.empty:
+        leer = gdf.copy()
+        return leer, {"luecke_m2": 0.0, "ueberlappung_m2": 0.0}
+
+    # Auf ein Gitter einrasten, BEVOR das Grenznetz gebildet wird. Ohne das
+    # berühren sich die Flächen an unzähligen Pixelecken, das Netz zerfällt in
+    # Mikrokanten (gemessen: 4.467 Kanten, Median 0,26 m und drei Punkte) und
+    # keine Vereinfachung kann dort greifen — die Endpunkte sind fixiert.
+    if raster_m and raster_m > 0:
+        from shapely import set_precision
+
+        gdf["geometry"] = [set_precision(g, raster_m) for g in gdf.geometry]
+        gdf = gdf[~gdf.geometry.is_empty & gdf.geometry.is_valid & (gdf.area > 1e-6)]
+        if gdf.empty:
+            return gdf.copy(), {"luecke_m2": 0.0, "ueberlappung_m2": 0.0}
+
+    gebiet = clip if clip is not None else unary_union(list(gdf.geometry))
+
+    def punkte(g):
+        teile = g.geoms if hasattr(g, "geoms") else [g]
+        return sum(len(t.exterior.coords) for t in teile if t.geom_type == "Polygon")
+
+    vorher_punkte = int(sum(punkte(g) for g in gdf.geometry))
+
+    # Vereinigung trennt das Netz an jeder Kreuzung auf — die Knoten, die
+    # danach festgehalten werden.
+    netz = unary_union([g.boundary for g in gdf.geometry] + [gebiet.boundary])
+    # unary_union zerlegt in Einzelstrecken — gemessen: 86 Zwei-Punkt-Segmente
+    # für zwei Flächen. Darauf greift weder Ausdünnen noch Runden, beides
+    # braucht mindestens drei Punkte. linemerge verkettet sie wieder zu Zügen
+    # und bricht nur an echten Verzweigungen, also genau an den Knoten.
+    # Reale Ränder liefern gelegentlich entartete Stücke (ein Punkt, Nulllänge);
+    # linemerge bricht daran ab. Aussortieren, statt den Lauf zu verlieren.
+    roh = list(netz.geoms) if isinstance(netz, MultiLineString) else [netz]
+    brauchbar = [k for k in roh
+                 if k.geom_type == "LineString" and len(k.coords) > 1 and k.length > 0]
+    if not brauchbar:
+        return gdf.copy(), {"luecke_m2": float(gebiet.area), "ueberlappung_m2": 0.0}
+    verkettet = linemerge(brauchbar)
+    kanten = (list(verkettet.geoms) if isinstance(verkettet, MultiLineString)
+              else [verkettet])
+
+    # Der Gebietsrand ist gegeben und wird nicht geglättet: gerundet schneidet
+    # er Ecken ab, und die Partition passt dann nicht mehr in ihr Gebiet —
+    # gemessen 125 m² Lücke an einem 40-m-Quadrat, allein aus den vier Ecken.
+    # Eng gefasst: mit der Toleranz als Puffer gilt jede Kante, die zufällig
+    # nahe am Gebietsrand verläuft, als Randkante und bleibt ungeglättet —
+    # gemessen blieb die Zackigkeit dadurch fast unverändert.
+    rand = gebiet.boundary.buffer(0.01)
+
+    geglaettet = []
+    for kante in kanten:
+        if kante.geom_type != "LineString" or len(kante.coords) < 3:
+            geglaettet.append(kante)
+            continue
+        if kante.within(rand):
+            geglaettet.append(kante)
+            continue
+        vereinfacht = kante.simplify(toleranz_m, preserve_topology=True)
+        rund = _chaikin_linie(list(vereinfacht.coords), runden) if runden else list(vereinfacht.coords)
+        if len(rund) >= 2:
+            geglaettet.append(LineString(rund))
+
+    flaechen = [f for f in polygonize(unary_union(geglaettet)) if not f.is_empty]
+    if not flaechen:
+        return gdf.copy(), {"luecke_m2": float(gebiet.area), "ueberlappung_m2": 0.0}
+
+    # Klasse aus der Eingabe übernehmen: über den Punkt, der garantiert INNEN
+    # liegt — ein Schwerpunkt kann bei c-förmigen Flächen ausserhalb landen.
+    treffer = gpd.GeoDataFrame(geometry=[f.representative_point() for f in flaechen],
+                               crs=gdf.crs)
+    attribute = [s for s in gdf.columns if s != "geometry"]
+    zuordnung = gpd.sjoin(treffer, gdf[attribute + ["geometry"]],
+                          how="left", predicate="within")
+    zuordnung = zuordnung[~zuordnung.index.duplicated(keep="first")]
+
+    aus = gpd.GeoDataFrame(
+        {s: zuordnung[s].to_numpy() for s in attribute},
+        geometry=flaechen, crs=gdf.crs)
+    ohne = aus[aus[klasse_spalte].isna()]
+    aus = aus[aus[klasse_spalte].notna()]
+    if len(ohne) and len(aus):
+        # Wegwerfen risse genau die Lücke auf, die diese Funktion vermeiden soll
+        nachbar = gpd.sjoin_nearest(ohne[["geometry"]], aus, how="left")
+        nachbar = nachbar[~nachbar.index.duplicated(keep="first")]
+        ohne = ohne.copy()
+        for spalte in [s for s in aus.columns if s != "geometry"]:
+            quelle_spalte = spalte + "_right" if spalte + "_right" in nachbar else spalte
+            if quelle_spalte in nachbar:
+                ohne[spalte] = nachbar[quelle_spalte].to_numpy()
+        aus = gpd.GeoDataFrame(__import__("pandas").concat([aus, ohne]), crs=gdf.crs)
+    if clip is not None:
+        aus["geometry"] = aus.geometry.intersection(gebiet)
+        aus = aus[~aus.geometry.is_empty]
+
+    # Splitter dem grössten Nachbarn zuschlagen, statt sie zu verwerfen
+    klein = aus[aus.area < min_flaeche_m2]
+    gross = aus[aus.area >= min_flaeche_m2]
+    if len(klein) and len(gross):
+        nachbar = gpd.sjoin_nearest(klein[["geometry"]], gross[[klasse_spalte, "geometry"]],
+                                    how="left")
+        nachbar = nachbar[~nachbar.index.duplicated(keep="first")]
+        klein = klein.copy()
+        klein[klasse_spalte] = nachbar[klasse_spalte + "_right"].to_numpy() \
+            if klasse_spalte + "_right" in nachbar else nachbar[klasse_spalte].to_numpy()
+        aus = gpd.GeoDataFrame(__import__("pandas").concat([gross, klein]), crs=gdf.crs)
+
+    schluessel = [s for s in aus.columns if s != "geometry"]
+    aus = aus.dissolve(by=schluessel, as_index=False).explode(index_parts=False)
+    aus = aus[~aus.geometry.is_empty].reset_index(drop=True)
+
+    vereinigt = unary_union(list(aus.geometry))
+    info = {
+        "luecke_m2": float(gebiet.difference(vereinigt).area),
+        "ueberlappung_m2": float(aus.area.sum() - vereinigt.area),
+        "stuetzpunkte_vorher": vorher_punkte,
+        "stuetzpunkte_nachher": int(sum(punkte(g) for g in aus.geometry)),
+        "zackigkeit_vorher": zackig_vorher,
+        "zackigkeit_nachher": _zackigkeit_gesamt(list(aus.geometry)),
+        "flaechen": int(len(aus)),
+    }
+    return aus, info

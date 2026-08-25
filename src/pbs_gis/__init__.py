@@ -33,6 +33,7 @@ from pbs_gis.cad import (
 )
 from pbs_gis.geometry import (
     smooth_polygons,
+    smooth_partition,
     buffer_ring_zones,
     classify_direction,
     distance_to_nearest,
@@ -132,6 +133,7 @@ __all__ = [
     "find_column",
     "morphological_filter",
     "smooth_polygons",
+    "smooth_partition",
     "repair_geometry",
     "strip_utm_zone_prefix",
     "distance_to_nearest",
