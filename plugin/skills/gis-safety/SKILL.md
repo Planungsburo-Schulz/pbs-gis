@@ -22,7 +22,22 @@ Apply these rules to ALL code written in pbs_gis projects.
 
 When producing GeoDataFrame outputs, always explode MultiPolygons into individual Polygon features (`.explode(index_parts=False)`). MultiPolygons make styling, labeling, and area calculations unreliable in QGIS — and a multi-part result gets only one label per feature, leaving disjoint patches unlabelled; exploding gives every patch its own value.
 
-**Labels vanish silently.** By default QGIS drops any label that collides with another, and the map then looks fully labelled — measured in one project: 6 of 17 areas carried a label while the rendering read as complete. Where the labels ARE the content (a quantity check, an area balance), set `displayAll = True` on the labeling settings so nothing is dropped, and verify by counting: `canvas.labelingResults().allLabels()` against the layer's feature count. Overlapping labels are honest and fixable; missing ones are invisible. If the result is unreadable at one scale, the answer is a second map extent for the dense area, never fewer labels.
+**Labels vanish silently.** By default QGIS drops any label that collides with another, and the map then looks fully labelled — measured in one project: 6 of 17 areas carried a label while the rendering read as complete. Where the labels ARE the content (a quantity check, an area balance):
+
+```python
+ps = lab.placementSettings()
+ps.setOverlapHandling(Qgis.LabelOverlapHandling.AllowOverlapAtNoCost)
+ps.setAllowDegradedPlacement(True)
+lab.setPlacementSettings(ps)          # NOT lab.displayAll — see below
+lab.fitInPolygonOnly = False
+lab.scaleVisibility = False
+```
+
+`QgsPalLayerSettings.displayAll` is the trap: it works at runtime and is **not written to the project file** (deprecated since QGIS 3.26 in favour of `overlapHandling`), so the setting silently dies on the next project load. Worse, assigning `displayAll = True` *after* `setPlacementSettings` resets the handling to `AllowOverlapIfRequired` — measured: 17 labels dropped back to 11.
+
+Two verifications, both required: count `canvas.labelingResults().allLabels()` against `layer.featureCount()`, and — because the canvas renders asynchronously — **wait for `mapCanvasRefreshed` before reading the results**, or the count belongs to the previous render (measured: 9 instead of 17). Then reload the saved project and count again; only that proves the setting survived. Overlapping labels are honest and fixable, missing ones invisible. If the result is unreadable at one scale, the answer is a second map extent for the dense area, never fewer labels.
+
+**Data-defined label properties belong on `QgsPalLayerSettings.dataDefinedProperties()`**, not on the `QgsTextFormat` — set on the text format they are accepted, stored, and never evaluated, so a colour rule meant to flag unmatched features just stays black.
 
 When styling outputs over a basemap (DOP, ALKIS):
 - **One colour = one role.** Reserve one high-contrast colour for the *alert* role — the conflict/result the map exists to show — and use it for nothing else (not the fence, not a boundary).
