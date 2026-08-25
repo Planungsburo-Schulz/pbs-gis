@@ -124,3 +124,28 @@ def test_nur_genannte_klassen_werden_aufgeloest(mit_splittern) -> None:
 
     # Auch bei riesiger Schwelle bleiben befestigt und Grünfläche stehen
     assert {"befestigt", "Grünfläche"} <= set(aus["klasse"])
+
+
+def test_kreuzende_kante_wird_nicht_uebernommen(karte_und_kante) -> None:
+    """Der Kern der Richtungsprüfung: eine Kante, die die Klassengrenze KREUZT,
+    ist an der Kreuzung genauso nah wie eine, die sie begleitet. Ohne die
+    Prüfung wurde sie als Ersatz behandelt — und riss die Karte auseinander."""
+    gdf, _, gebiet = karte_und_kante
+    quer = gpd.GeoDataFrame(geometry=[LineString([(20, 0), (20, 40)])], crs=CRS)
+
+    aus, info = partition_along(gdf, "klasse", quer, clip=gebiet,
+                                naehe_m=1.5, max_winkel_grad=25)
+
+    assert info["kanten_genutzt_m"] == pytest.approx(0.0, abs=0.5)
+    assert len(aus) == 2
+    assert info["luecke_m2"] < 0.01
+
+
+def test_zu_kurzer_paralleler_abschnitt_zaehlt_nicht(karte_und_kante) -> None:
+    gdf, _, gebiet = karte_und_kante
+    kurz = gpd.GeoDataFrame(geometry=[LineString([(10, 20.8), (12, 20.8)])], crs=CRS)
+
+    aus, info = partition_along(gdf, "klasse", kurz, clip=gebiet,
+                                naehe_m=1.5, min_laenge_m=4.0)
+
+    assert info["kanten_genutzt_m"] == pytest.approx(0.0, abs=0.5)

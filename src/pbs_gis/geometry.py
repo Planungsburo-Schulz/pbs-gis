@@ -1250,6 +1250,80 @@ def smooth_partition(
     return aus, info
 
 
+def _richtung(linie, s: float, ds: float = 1.0):
+    """Einheitsvektor der Linienrichtung an der Bogenlänge *s*."""
+    import math
+
+    a = linie.interpolate(max(s - ds / 2, 0))
+    b = linie.interpolate(min(s + ds / 2, linie.length))
+    dx, dy = b.x - a.x, b.y - a.y
+    n = math.hypot(dx, dy)
+    return (dx / n, dy / n) if n > 0 else None
+
+
+def _parallele_abschnitte(kanten_linie, grenzen, *, naehe_m: float,
+                          max_winkel_grad: float, schritt_m: float = 2.0,
+                          min_laenge_m: float = 4.0):
+    """Abschnitte einer Kante, die nah UND richtungsgleich zu einer Grenze laufen.
+
+    Nähe allein genügt nicht: eine Kante, die eine Klassengrenze KREUZT, ist an
+    der Kreuzung ebenso nah wie eine, die sie begleitet — und wird ohne diese
+    Prüfung genauso als Ersatz behandelt. Genau daran kollabierte die Übernahme
+    an einer realen Karte.
+    """
+    import math
+
+    from shapely.geometry import LineString, MultiLineString
+    from shapely.ops import unary_union
+
+    linien = (list(kanten_linie.geoms) if isinstance(kanten_linie, MultiLineString)
+              else [kanten_linie])
+    cos_grenze = math.cos(math.radians(max_winkel_grad))
+    treffer = []
+
+    for linie in linien:
+        if linie.geom_type != "LineString" or linie.length < schritt_m:
+            continue
+        lauf = []
+        s = 0.0
+        while s <= linie.length:
+            p = linie.interpolate(s)
+            if p.distance(grenzen) <= naehe_m:
+                r_kante = _richtung(linie, s, schritt_m)
+                t = grenzen.project(p)
+                r_grenze = _richtung(grenzen, t, schritt_m) if hasattr(grenzen, "project") else None
+                if r_kante and r_grenze:
+                    # Betrag: Gegenrichtung ist ebenso parallel
+                    kos = abs(r_kante[0] * r_grenze[0] + r_kante[1] * r_grenze[1])
+                    if kos >= cos_grenze:
+                        lauf.append(s)
+                        s += schritt_m
+                        continue
+            if len(lauf) >= 2 and (lauf[-1] - lauf[0]) >= min_laenge_m:
+                treffer.append(_teilstueck(linie, lauf[0], lauf[-1]))
+            lauf = []
+            s += schritt_m
+        if len(lauf) >= 2 and (lauf[-1] - lauf[0]) >= min_laenge_m:
+            treffer.append(_teilstueck(linie, lauf[0], lauf[-1]))
+
+    return unary_union(treffer) if treffer else LineString([])
+
+
+def _teilstueck(linie, s0: float, s1: float):
+    """Abschnitt einer Linie zwischen zwei Bogenlängen."""
+    from shapely.geometry import LineString
+
+    punkte = [linie.interpolate(s0)]
+    for x, y in linie.coords:
+        from shapely.geometry import Point
+
+        s = linie.project(Point(x, y))
+        if s0 < s < s1:
+            punkte.append(Point(x, y))
+    punkte.append(linie.interpolate(s1))
+    return LineString([(p.x, p.y) for p in punkte])
+
+
 def partition_along(
     gdf,
     klasse_spalte: str,
@@ -1257,6 +1331,8 @@ def partition_along(
     *,
     clip=None,
     naehe_m: float = 1.5,
+    max_winkel_grad: float = 25.0,
+    min_laenge_m: float = 4.0,
     min_anteil: float = 0.5,
 ):
     """Klassengrenzen auf gemessene Kanten legen, statt sie im Bild zu lassen.
@@ -1267,16 +1343,21 @@ def partition_along(
     Unterschied nicht die Genauigkeit allein: eine Grenze auf einer Vermessungs-
     kante ist BEGRÜNDBAR, eine auf einer Farbschwelle nicht.
 
-    GEMESSENE GRENZE DES VERFAHRENS: es taugt für Karten mit wenigen grossen
-    Flächen und Kanten, die tatsächlich AUF den Klassengrenzen liegen. An einer
-    fragmentierten Klassifikation — 70 Flächen, 1.611 m Vermessungskanten quer
-    durch das Gebiet — entfernt der Schritt mehr Klassengrenze, als die Kanten
-    ersetzen: die Karte kollabierte auf 72 m² Grünfläche statt 2.580. Der Grund
-    ist, dass eine Kante als „grenznah" gilt, sobald sie irgendwo nah vorbeiläuft,
-    auch wenn sie in eine ganz andere Richtung zeigt. Vor dem Einsatz auf so
-    einer Karte fehlt eine Richtungsprüfung (Kante parallel zur Grenze über eine
-    Mindestlänge). Das Ergebnis gehört in jedem Fall gegen die Flächenbilanz der
-    Eingabe geprüft, nicht nur auf Lücken.
+    STAND UND GEMESSENE GRENZE. Die Richtungsprüfung ist eingebaut: nur
+    Kantenabschnitte, die über ``min_laenge_m`` hinweg innerhalb ``naehe_m`` und
+    im Winkel unter ``max_winkel_grad`` zur Grenze verlaufen, gelten als Ersatz.
+    Ohne sie genügte Nähe — und eine KREUZENDE Kante ist an der Kreuzung ebenso
+    nah wie eine begleitende; an einer realen Karte kollabierte die Klassifikation
+    dadurch auf 72 statt 2.580 m² Grünfläche. Mit ihr bleibt der Kollaps aus.
+
+    WAS NOCH FEHLT: das Ersetzen selbst ist auf fragmentierten Karten weiterhin
+    nicht flächentreu. An derselben Karte (54 Flächen, 148 m parallele Kanten
+    gegen 131 m entfernte Grenze — eine gesunde Bilanz) sprang die Grünfläche
+    dennoch um +1.764 m², weil beim Neubilden Flächen verschmelzen, deren
+    Trennung nicht durch eine Kante ersetzt wird. Bis das geklärt ist, gilt:
+    einsetzbar auf Karten mit wenigen grossen Flächen und wirklich
+    grenzführenden Kanten, und das Ergebnis IMMER gegen die Flächenbilanz der
+    Eingabe prüfen — die Lückenprüfung allein meldete hier sauber 0,00 m².
 
     Statt die Grenzen zu verschieben (was Lücken reisst, sobald zwei Nachbarn
     verschieden weit springen), werden die gemessenen Kanten ins Grenznetz
@@ -1290,9 +1371,12 @@ def partition_along(
         klasse_spalte: Spalte mit der Klasse.
         kanten: GeoDataFrame/GeoSeries mit Referenzlinien (Vermessungskanten).
         clip: Gebiet, das die Partition ausfüllt.
-        naehe_m: Nur Kanten, die höchstens so weit von einer bestehenden
-            Klassengrenze entfernt sind, werden aufgenommen. Weiter entfernte
-            Kanten liegen mitten in einer Fläche und zerschneiden sie ohne Grund.
+        naehe_m: Höchstabstand zwischen Kante und Klassengrenze.
+        max_winkel_grad: Höchster Richtungsunterschied. Nähe allein genügt
+            nicht — eine Kante, die eine Grenze KREUZT, ist an der Kreuzung
+            ebenso nah wie eine, die sie begleitet.
+        min_laenge_m: Ein paralleler Abschnitt muss mindestens so lang sein.
+            Kürzere Zufallstreffer ersetzen keine Grenze.
         min_anteil: Mindest-Flächenanteil, den die Mehrheitsklasse in einer
             neuen Teilfläche haben muss. Darunter gilt sie als uneindeutig und
             behält die Klasse der grössten überlappenden Ausgangsfläche.
@@ -1305,7 +1389,7 @@ def partition_along(
     import numpy as np
     import pandas as pd
     from shapely.geometry import MultiLineString
-    from shapely.ops import polygonize, unary_union
+    from shapely.ops import linemerge, polygonize, unary_union
 
     if gdf.empty:
         return gdf.copy(), {"kanten_genutzt_m": 0.0, "luecke_m2": 0.0}
@@ -1319,15 +1403,29 @@ def partition_along(
 
     kanten_geom = (list(kanten.geometry) if hasattr(kanten, "geometry")
                    else list(kanten))
-    nah = unary_union(kanten_geom).intersection(klassengrenzen.buffer(naehe_m))
-    nah = nah.intersection(gebiet)
+    # Verketten, bevor abgeschritten wird: nach dem Zuschnitt liegen die Kanten
+    # als Mikrostücke vor, viele kürzer als die Schrittweite — abgeschritten
+    # ergäbe das nirgends einen zusammenhängenden parallelen Abschnitt.
+    roh = unary_union(kanten_geom).intersection(gebiet)
+    stuecke_k = [k for k in (roh.geoms if hasattr(roh, "geoms") else [roh])
+                 if k.geom_type == "LineString" and len(k.coords) > 1 and k.length > 0]
+    kanten_linie = linemerge(stuecke_k) if stuecke_k else roh
+    nah = _parallele_abschnitte(kanten_linie, klassengrenzen, naehe_m=naehe_m,
+                                max_winkel_grad=max_winkel_grad,
+                                min_laenge_m=min_laenge_m)
     genutzt = nah.length
 
     # Wo eine gemessene Kante einspringt, wird die alte Klassengrenze ENTFERNT —
     # sonst bleiben beide im Netz stehen, der Streifen dazwischen wird eine
     # eigene Fläche und behält per Mehrheit seine alte Klasse. Die Grenze wandert
     # dann gar nicht, obwohl die Kante aufgenommen wurde.
-    ersetzt = (alle_raender.difference(nah.buffer(naehe_m))
+    # Nur der Grenzabschnitt neben einem parallelen Kantenstück fällt weg — mit
+    # dem vollen Nähe-Puffer verschwand auch Grenze, die keine Kante ersetzt.
+    # Flache Endkappe: ein runder Puffer ragt über die Enden des parallelen
+    # Abschnitts hinaus und reisst dort ein Loch ins Netz, durch das die
+    # Nachbarflächen verschmelzen — gemessen sprang die Grünfläche dadurch um
+    # +1.764 m².
+    ersetzt = (alle_raender.difference(nah.buffer(naehe_m * 1.05, cap_style=2))
                if not nah.is_empty else alle_raender)
     netz = unary_union([ersetzt, gebiet.boundary, nah])
     stuecke = [k for k in (netz.geoms if hasattr(netz, "geoms") else [netz])
