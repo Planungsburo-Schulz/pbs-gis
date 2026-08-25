@@ -3,6 +3,7 @@ conversion, and Map Object Data."""
 
 from pbs_gis.dxf.convert import shapefile_to_dxf
 from pbs_gis.dxf.document import new_dxf_document, ensure_layer
+from pbs_gis.dxf.blockflaechen import block_basisradius, block_circles
 from pbs_gis.dxf.hatch import extract_hatch_areas
 from pbs_gis.dxf.extract import (
     extract_dxf_circles,
@@ -39,6 +40,8 @@ __all__ = [
     "dwg_to_dxf",
     "dxf_subset",
     "extract_hatch_areas",
+    "block_circles",
+    "block_basisradius",
     "dxf_subset_from_sources",
     "is_dwg_supported",
     "CadReadError",

@@ -29,6 +29,8 @@ _MODULES = [
     "pbs_gis.einpassung.fit",          # Einpassung Mechanismus 5 — Fit, ICP, Isolation
     "pbs_gis.dxf.read",       # CAD input reading (.dxf/.dwg -> ezdxf document)
     "pbs_gis.dxf.extract",   # DXF extraction
+    "pbs_gis.luftbild",     # Vegetation aus RGB-Luftbild (Bestandsermittlung)
+    "pbs_gis.dxf.blockflaechen",  # Symbolbloecke (Baumkronen) als Flaechen
     "pbs_gis.dxf.hatch",     # HATCH surfaces as areas
     "pbs_gis.dxf.subset",    # working-layer subset of a foreign drawing
     "pbs_gis.dxf.convert",   # SHP→DXF conversion
