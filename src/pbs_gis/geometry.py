@@ -1248,3 +1248,186 @@ def smooth_partition(
         "flaechen": int(len(aus)),
     }
     return aus, info
+
+
+def partition_along(
+    gdf,
+    klasse_spalte: str,
+    kanten,
+    *,
+    clip=None,
+    naehe_m: float = 1.5,
+    min_anteil: float = 0.5,
+):
+    """Klassengrenzen auf gemessene Kanten legen, statt sie im Bild zu lassen.
+
+    Eine Bildklassifikation zieht ihre Grenzen dort, wo die Farbe wechselt —
+    gemessen an einer realen Karte im Median 0,91 m neben der Kante, die der
+    Vermesser aufgenommen hat. Für ein Dokument, das geprüft wird, ist der
+    Unterschied nicht die Genauigkeit allein: eine Grenze auf einer Vermessungs-
+    kante ist BEGRÜNDBAR, eine auf einer Farbschwelle nicht.
+
+    GEMESSENE GRENZE DES VERFAHRENS: es taugt für Karten mit wenigen grossen
+    Flächen und Kanten, die tatsächlich AUF den Klassengrenzen liegen. An einer
+    fragmentierten Klassifikation — 70 Flächen, 1.611 m Vermessungskanten quer
+    durch das Gebiet — entfernt der Schritt mehr Klassengrenze, als die Kanten
+    ersetzen: die Karte kollabierte auf 72 m² Grünfläche statt 2.580. Der Grund
+    ist, dass eine Kante als „grenznah" gilt, sobald sie irgendwo nah vorbeiläuft,
+    auch wenn sie in eine ganz andere Richtung zeigt. Vor dem Einsatz auf so
+    einer Karte fehlt eine Richtungsprüfung (Kante parallel zur Grenze über eine
+    Mindestlänge). Das Ergebnis gehört in jedem Fall gegen die Flächenbilanz der
+    Eingabe geprüft, nicht nur auf Lücken.
+
+    Statt die Grenzen zu verschieben (was Lücken reisst, sobald zwei Nachbarn
+    verschieden weit springen), werden die gemessenen Kanten ins Grenznetz
+    aufgenommen und die Flächen daraus neu gebildet. Jede neue Teilfläche
+    bekommt die Klasse, die sie flächenmässig beherrscht; anschliessend
+    verschmelzen gleiche Nachbarn, wodurch alle Schnitte verschwinden, die keine
+    Klassengrenze sind.
+
+    Args:
+        gdf: Klassenkarte (Polygone) in einem metrischen CRS.
+        klasse_spalte: Spalte mit der Klasse.
+        kanten: GeoDataFrame/GeoSeries mit Referenzlinien (Vermessungskanten).
+        clip: Gebiet, das die Partition ausfüllt.
+        naehe_m: Nur Kanten, die höchstens so weit von einer bestehenden
+            Klassengrenze entfernt sind, werden aufgenommen. Weiter entfernte
+            Kanten liegen mitten in einer Fläche und zerschneiden sie ohne Grund.
+        min_anteil: Mindest-Flächenanteil, den die Mehrheitsklasse in einer
+            neuen Teilfläche haben muss. Darunter gilt sie als uneindeutig und
+            behält die Klasse der grössten überlappenden Ausgangsfläche.
+
+    Returns:
+        ``(GeoDataFrame, info)`` mit ``kanten_genutzt_m``, ``luecke_m2`` und der
+        Zahl der Flächen vorher/nachher.
+    """
+    import geopandas as gpd
+    import numpy as np
+    import pandas as pd
+    from shapely.geometry import MultiLineString
+    from shapely.ops import polygonize, unary_union
+
+    if gdf.empty:
+        return gdf.copy(), {"kanten_genutzt_m": 0.0, "luecke_m2": 0.0}
+
+    gebiet = clip if clip is not None else unary_union(list(gdf.geometry))
+    alle_raender = unary_union([g.boundary for g in gdf.geometry])
+    # Nur die INNEREN Grenzen zählen: der Aussenrand ist durch das Gebiet
+    # gegeben und keine Klassengrenze. Zählt man ihn mit, gilt jede Kante, die
+    # das Gebiet quert, als grenznah und zerschneidet Flächen ohne Grund.
+    klassengrenzen = alle_raender.difference(gebiet.boundary.buffer(0.05))
+
+    kanten_geom = (list(kanten.geometry) if hasattr(kanten, "geometry")
+                   else list(kanten))
+    nah = unary_union(kanten_geom).intersection(klassengrenzen.buffer(naehe_m))
+    nah = nah.intersection(gebiet)
+    genutzt = nah.length
+
+    # Wo eine gemessene Kante einspringt, wird die alte Klassengrenze ENTFERNT —
+    # sonst bleiben beide im Netz stehen, der Streifen dazwischen wird eine
+    # eigene Fläche und behält per Mehrheit seine alte Klasse. Die Grenze wandert
+    # dann gar nicht, obwohl die Kante aufgenommen wurde.
+    ersetzt = (alle_raender.difference(nah.buffer(naehe_m))
+               if not nah.is_empty else alle_raender)
+    netz = unary_union([ersetzt, gebiet.boundary, nah])
+    stuecke = [k for k in (netz.geoms if hasattr(netz, "geoms") else [netz])
+               if k.geom_type == "LineString" and len(k.coords) > 1 and k.length > 0]
+    neu = [f for f in polygonize(unary_union(stuecke)) if not f.is_empty and f.area > 0]
+    if not neu:
+        return gdf.copy(), {"kanten_genutzt_m": float(genutzt),
+                            "luecke_m2": float(gebiet.area)}
+
+    # Klasse über den FLÄCHENANTEIL, nicht über einen Punkt: eine neue Teilfläche
+    # kann über zwei alte reichen, und dann entscheidet ein Punkt willkürlich.
+    neu_gdf = gpd.GeoDataFrame(geometry=neu, crs=gdf.crs)
+    neu_gdf["neu_id"] = range(len(neu_gdf))
+    neu_gdf["neu_flaeche"] = neu_gdf.area
+    schnitt = gpd.overlay(neu_gdf, gdf[[klasse_spalte, "geometry"]],
+                          how="intersection", keep_geom_type=True)
+    schnitt["anteil"] = schnitt.area
+    gruppe = (schnitt.groupby(["neu_id", klasse_spalte])["anteil"].sum()
+              .reset_index().sort_values("anteil", ascending=False))
+    beste = gruppe.drop_duplicates("neu_id").set_index("neu_id")
+
+    neu_gdf[klasse_spalte] = neu_gdf["neu_id"].map(beste[klasse_spalte])
+    neu_gdf["_anteil"] = (neu_gdf["neu_id"].map(beste["anteil"])
+                          / neu_gdf["neu_flaeche"])
+    neu_gdf = neu_gdf[neu_gdf[klasse_spalte].notna()]
+
+    aus = neu_gdf[[klasse_spalte, "geometry"]].dissolve(
+        by=klasse_spalte, as_index=False).explode(index_parts=False)
+    aus = aus[aus.geom_type.isin(["Polygon", "MultiPolygon"])]
+    aus = aus[~aus.geometry.is_empty & (aus.area > 0)].reset_index(drop=True)
+
+    vereinigt = unary_union(list(aus.geometry))
+    info = {
+        "kanten_genutzt_m": float(genutzt),
+        "kanten_gesamt_m": float(unary_union(kanten_geom).intersection(gebiet).length),
+        "luecke_m2": float(gebiet.difference(vereinigt).area),
+        "flaechen_vorher": int(len(gdf)),
+        "flaechen_nachher": int(len(aus)),
+        "uneindeutig": int((neu_gdf["_anteil"] < min_anteil).sum()),
+    }
+    return aus, info
+
+
+def absorb_small(
+    gdf,
+    klasse_spalte: str,
+    *,
+    min_flaeche_m2: float = 30.0,
+    nur_klassen: list[str] | None = None,
+):
+    """Kleinstflächen dem Nachbarn zuschlagen, mit dem sie die längste Grenze teilen.
+
+    Eine Klassifikation lässt Splitter zurück, die keine Aussage sind, sondern
+    Rauschen — besonders in der Grauzone um eine Schwelle. Sie einzeln zu
+    entscheiden ist Handarbeit ohne Erkenntnis; wo eine solche Fläche fast
+    vollständig von einer Klasse umgeben ist, ist die Zuordnung Topologie und
+    keine Interpretation.
+
+    Der Nachbar wird über die LÄNGE der gemeinsamen Grenze bestimmt, nicht über
+    die Entfernung: eine Fläche kann an einer Ecke an etwas anderes stossen als
+    an ihrer ganzen langen Seite.
+
+    Args:
+        gdf: Klassenkarte.
+        klasse_spalte: Spalte mit der Klasse.
+        min_flaeche_m2: Flächen darunter werden aufgelöst.
+        nur_klassen: Nur diese Klassen auflösen (etwa ``["unsicher"]``).
+            ``None`` behandelt alle.
+
+    Returns:
+        ``(GeoDataFrame, info)`` mit ``aufgeloest``, ``aufgeloest_m2`` und
+        ``uebrig`` — Kleinstflächen ohne Nachbarn bleiben stehen.
+    """
+    import geopandas as gpd
+    import pandas as pd
+
+    if gdf.empty:
+        return gdf.copy(), {"aufgeloest": 0, "aufgeloest_m2": 0.0, "uebrig": 0}
+
+    arbeit = gdf.reset_index(drop=True).copy()
+    klein = arbeit[(arbeit.area < min_flaeche_m2)
+                   & (arbeit[klasse_spalte].isin(nur_klassen) if nur_klassen else True)]
+    if klein.empty:
+        return arbeit, {"aufgeloest": 0, "aufgeloest_m2": 0.0, "uebrig": 0}
+
+    gross = arbeit.drop(index=klein.index)
+    aufgeloest, flaeche, uebrig = 0, 0.0, 0
+    for i, zeile in klein.iterrows():
+        beruehrt = gross[gross.geometry.intersects(zeile.geometry.buffer(0.01))]
+        if beruehrt.empty:
+            uebrig += 1
+            continue
+        laengen = beruehrt.geometry.apply(
+            lambda g: g.buffer(0.01).intersection(zeile.geometry.buffer(0.01)).area)
+        ziel = laengen.idxmax()
+        arbeit.at[i, klasse_spalte] = gross.at[ziel, klasse_spalte]
+        aufgeloest += 1
+        flaeche += float(zeile.geometry.area)
+
+    schluessel = [s for s in arbeit.columns if s != "geometry"]
+    aus = arbeit.dissolve(by=schluessel, as_index=False).explode(index_parts=False)
+    aus = aus[aus.geom_type.isin(["Polygon", "MultiPolygon"])].reset_index(drop=True)
+    return aus, {"aufgeloest": aufgeloest, "aufgeloest_m2": flaeche, "uebrig": uebrig}

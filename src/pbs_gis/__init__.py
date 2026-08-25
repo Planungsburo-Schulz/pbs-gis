@@ -34,6 +34,8 @@ from pbs_gis.cad import (
 from pbs_gis.geometry import (
     smooth_polygons,
     smooth_partition,
+    partition_along,
+    absorb_small,
     buffer_ring_zones,
     classify_direction,
     distance_to_nearest,
@@ -134,6 +136,8 @@ __all__ = [
     "morphological_filter",
     "smooth_polygons",
     "smooth_partition",
+    "partition_along",
+    "absorb_small",
     "repair_geometry",
     "strip_utm_zone_prefix",
     "distance_to_nearest",
