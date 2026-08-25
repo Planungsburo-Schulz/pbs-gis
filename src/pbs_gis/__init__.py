@@ -32,6 +32,7 @@ from pbs_gis.cad import (
     load_styles,
 )
 from pbs_gis.geometry import (
+    smooth_polygons,
     buffer_ring_zones,
     classify_direction,
     distance_to_nearest,
@@ -130,6 +131,7 @@ __all__ = [
     "load_and_union",
     "find_column",
     "morphological_filter",
+    "smooth_polygons",
     "repair_geometry",
     "strip_utm_zone_prefix",
     "distance_to_nearest",

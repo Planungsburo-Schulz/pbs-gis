@@ -867,3 +867,116 @@ def _extract_polygons(geom) -> list[Polygon]:
                 out.append(g)
         return out
     return []
+
+
+def _chaikin_ring(coords: list[tuple[float, float]], runden: int) -> list[tuple[float, float]]:
+    """Chaikins Eckenabschnitt auf einem geschlossenen Ring."""
+    punkte = list(coords[:-1]) if coords[0] == coords[-1] else list(coords)
+    for _ in range(runden):
+        neu = []
+        n = len(punkte)
+        for i in range(n):
+            (x0, y0), (x1, y1) = punkte[i], punkte[(i + 1) % n]
+            neu.append((0.75 * x0 + 0.25 * x1, 0.75 * y0 + 0.25 * y1))
+            neu.append((0.25 * x0 + 0.75 * x1, 0.25 * y0 + 0.75 * y1))
+        punkte = neu
+    return punkte + [punkte[0]]
+
+
+def smooth_polygons(
+    gdf,
+    *,
+    zacken_m: float = 0.8,
+    toleranz_m: float = 0.4,
+    runden: int = 2,
+    min_flaeche_m2: float = 2.0,
+):
+    """Flächenumrisse in eine zeichenbare Form bringen.
+
+    Automatisch gewonnene Flächen — aus Rasterklassifikation, Segmentierung oder
+    Digitalisierung am Bildschirm — haben Ränder aus hunderten kurzer Stücke mit
+    ständigen Richtungswechseln. Fachlich sind sie richtig, in einem Plan sind
+    sie unbrauchbar: keine dieser Zacken entspricht einer Kante im Gelände, und
+    ein Leser hält sie für Aussagen.
+
+    Drei Schritte, in dieser Reihenfolge:
+
+    1. **Zacken kappen** über Schliessen und Öffnen im Vektorraum
+       (``buffer(+d).buffer(−2d).buffer(+d)``). Entfernt Ausbuchtungen und
+       Einkerbungen unterhalb der Zackenbreite.
+    2. **Stützpunkte ausdünnen** (Douglas-Peucker) — was danach bleibt, sind
+       Richtungswechsel, die etwas bedeuten.
+    3. **Ecken runden** (Chaikin) — aus dem Polygonzug wird eine Linie, die man
+       zeichnen würde.
+
+    Die Fläche ändert sich dabei; wie stark, steht im Rückgabewert, denn eine
+    Glättung, die für eine Bilanz zu viel kostet, muss auffallen und nicht
+    geglaubt werden.
+
+    Args:
+        gdf: GeoDataFrame mit Polygonen in einem metrischen CRS.
+        zacken_m: Breite der Zacken, die verschwinden sollen.
+        toleranz_m: Douglas-Peucker-Toleranz.
+        runden: Chaikin-Durchläufe; 0 lässt die Ecken scharf.
+        min_flaeche_m2: Was danach kleiner ist, fällt weg.
+
+    Returns:
+        ``(GeoDataFrame, info)`` mit ``flaeche_vorher_m2``, ``flaeche_nachher_m2``,
+        ``flaechenaenderung_pct`` und der Stützpunktzahl vorher/nachher.
+    """
+    import numpy as np
+    from shapely.geometry import MultiPolygon, Polygon
+
+    if gdf.empty:
+        return gdf.copy(), {"flaeche_vorher_m2": 0.0, "flaeche_nachher_m2": 0.0,
+                            "flaechenaenderung_pct": 0.0}
+
+    def stuetzpunkte(g):
+        if g is None or g.is_empty:
+            return 0
+        teile = g.geoms if hasattr(g, "geoms") else [g]
+        return sum(len(t.exterior.coords) + sum(len(r.coords) for r in t.interiors)
+                   for t in teile if t.geom_type == "Polygon")
+
+    vorher_flaeche = float(gdf.area.sum())
+    vorher_punkte = int(sum(stuetzpunkte(g) for g in gdf.geometry))
+
+    d = zacken_m / 2.0
+    geglaettet = []
+    for geom in gdf.geometry:
+        g = geom.buffer(d, join_style=1).buffer(-2 * d, join_style=1).buffer(d, join_style=1)
+        if g.is_empty:
+            geglaettet.append(g)
+            continue
+        g = g.simplify(toleranz_m, preserve_topology=True)
+        if runden > 0:
+            teile = []
+            for t in (g.geoms if hasattr(g, "geoms") else [g]):
+                if t.geom_type != "Polygon" or t.is_empty:
+                    continue
+                aussen = _chaikin_ring(list(t.exterior.coords), runden)
+                innen = [_chaikin_ring(list(r.coords), runden) for r in t.interiors
+                         if len(r.coords) > 4]
+                p = Polygon(aussen, innen)
+                if not p.is_valid:
+                    p = p.buffer(0)
+                if not p.is_empty:
+                    teile.append(p)
+            g = teile[0] if len(teile) == 1 else (MultiPolygon(teile) if teile else g)
+        geglaettet.append(g)
+
+    aus = gdf.copy()
+    aus["geometry"] = geglaettet
+    aus = aus[~aus.geometry.is_empty & ~aus.geometry.isna()]
+    aus = aus[aus.area >= min_flaeche_m2]
+
+    nachher_flaeche = float(aus.area.sum())
+    info = {
+        "flaeche_vorher_m2": vorher_flaeche,
+        "flaeche_nachher_m2": nachher_flaeche,
+        "flaechenaenderung_pct": (100.0 * (nachher_flaeche - vorher_flaeche) / vorher_flaeche)
+        if vorher_flaeche else 0.0,
+        "stuetzpunkte_vorher": vorher_punkte,
+        "stuetzpunkte_nachher": int(sum(stuetzpunkte(g) for g in aus.geometry)),
+    }
+    return aus.reset_index(drop=True), info
