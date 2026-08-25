@@ -229,3 +229,84 @@ def test_glaettungsverlust_wird_ausgewiesen(tmp_path: Path) -> None:
     assert i_schmal["glaettungsverlust_pct"] < 20
     assert i_breit["glaettungsverlust_pct"] > 80
     assert i_breit["vegetation_roh_m2"] == pytest.approx(i_schmal["vegetation_roh_m2"])
+
+
+# --- Talschwelle und Segmentklassifikation ------------------------------------
+
+def test_talschwelle_trifft_das_tal_wo_otsu_die_flanke_trifft() -> None:
+    """Der Grund für das Verfahren, an synthetischen Daten reproduziert: bei
+    schiefer Verteilung landet Otsu in der Flanke des grossen Gipfels."""
+    from skimage.filters import threshold_otsu
+
+    from pbs_gis.luftbild import talschwelle
+
+    rng = np.random.default_rng(0)
+    belag = rng.normal(0.00, 0.012, 8000)     # gross, schmal
+    gruen = rng.normal(0.09, 0.035, 2500)     # klein, breit
+    werte = np.concatenate([belag, gruen])
+
+    tal = talschwelle(werte, bins=40)
+    otsu = float(threshold_otsu(werte))
+
+    assert 0.02 < tal < 0.06, f"Tal bei {tal}"
+    assert otsu > tal, "Otsu muss hier höher liegen — sonst prüft der Test nichts"
+    # Der Unterschied ist Fläche: wie viel Vegetation Otsu unterschlägt
+    assert (gruen > otsu).mean() < (gruen > tal).mean()
+
+
+def test_talschwelle_wirft_ohne_zwei_gipfel() -> None:
+    from pbs_gis.luftbild import talschwelle
+
+    rng = np.random.default_rng(1)
+    with pytest.raises(ValueError, match="keine zwei Gipfel"):
+        talschwelle(rng.normal(0, 1, 5000), bins=12, glaettung=5)
+
+
+def test_flaechengewicht_verschiebt_das_tal_nicht(tmp_path: Path) -> None:
+    """Das Gewicht ändert die Höhe der Gipfel, nicht ihre Lage — das Tal bleibt,
+    wo die beiden Populationen sich trennen."""
+    from pbs_gis.luftbild import talschwelle
+
+    rng = np.random.default_rng(3)
+    werte = np.concatenate([rng.normal(0.00, 0.012, 600),
+                            rng.normal(0.09, 0.030, 400)])
+    gleich = np.ones_like(werte)
+    # Segmentflächen streuen, hängen aber nicht vom Index ab — so ist es im Bild
+    streuend = rng.lognormal(2.0, 0.8, werte.size)
+
+    a = talschwelle(werte, gleich, bins=40)
+    b = talschwelle(werte, streuend, bins=40)
+
+    assert a == pytest.approx(b, abs=0.02)
+
+
+def test_segmentklassifikation_weist_grauzone_aus(tmp_path: Path) -> None:
+    import rasterio
+    from rasterio.transform import from_origin
+
+    from pbs_gis.luftbild import vegetationssegmente
+
+    # 30 x 30 m: Wiese, Belag und ein Übergangsstreifen dazwischen
+    n, aufl = 150, 0.2
+    rng = np.random.default_rng(7)
+    bild = np.zeros((3, n, n), np.float32)
+    bild[:, :, : n // 3] = np.array([70, 125, 60], np.float32)[:, None, None]
+    bild[:, :, n // 3 : n // 2] = np.array([115, 128, 110], np.float32)[:, None, None]
+    bild[:, :, n // 2 :] = np.array([132, 132, 132], np.float32)[:, None, None]
+    # Ohne Rauschen sind die Segmentwerte drei diskrete Punkte — ein Histogramm
+    # ohne Gipfel, das es in keinem echten Luftbild gibt.
+    bild = np.clip(bild + rng.normal(0, 6, bild.shape), 0, 255).astype(np.uint8)
+    p = tmp_path / "drei.tif"
+    with rasterio.open(p, "w", driver="GTiff", height=n, width=n, count=3,
+                       dtype="uint8", crs=CRS,
+                       transform=from_origin(300000, 5900000, aufl, aufl)) as dst:
+        dst.write(bild)
+
+    gdf, info = vegetationssegmente(p, segmentgroesse_m2=4.0, unsicherheitsband=0.004)
+
+    assert set(gdf["klasse"]) <= {"Grünfläche", "befestigt", "unsicher"}
+    assert info["flaeche_Grünfläche_m2"] > 200
+    assert info["flaeche_befestigt_m2"] > 200
+    # Ränder sind Kanten des Bildes, keine Rastertreppen: wenige Stützpunkte
+    ecken = [len(g.exterior.coords) for g in gdf.geometry if g.geom_type == "Polygon"]
+    assert np.median(ecken) < 200
