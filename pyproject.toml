@@ -32,6 +32,9 @@ dependencies = [
 qgis = [
     "qgis-mcp @ git+https://github.com/nkarasiak/qgis-mcp.git",
 ]
+ki = [
+    "deepforest>=2.1.0",
+]
 
 [project.scripts]
 gis-workflow = "pbs_gis.runner:main"

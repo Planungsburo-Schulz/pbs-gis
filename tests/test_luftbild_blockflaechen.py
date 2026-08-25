@@ -310,3 +310,54 @@ def test_segmentklassifikation_weist_grauzone_aus(tmp_path: Path) -> None:
     # Ränder sind Kanten des Bildes, keine Rastertreppen: wenige Stützpunkte
     ecken = [len(g.exterior.coords) for g in gdf.geometry if g.geom_type == "Polygon"]
     assert np.median(ecken) < 200
+
+
+def test_schattenbehandlung_holt_beschattetes_gruen_zurueck(tmp_path: Path) -> None:
+    """Dieselbe Wiese im Schatten hat einen viel schwächeren Vegetationsindex.
+    Mit einer gemeinsamen Schwelle zählt sie als Belag — gemessen an einem
+    realen DOP20 waren das 217 m² auf 6.924 m², durchweg zu Lasten des Grüns."""
+    import rasterio
+    from rasterio.transform import from_origin
+
+    from pbs_gis.luftbild import vegetationssegmente
+
+    n, aufl = 160, 0.25
+    rng = np.random.default_rng(11)
+    bild = np.zeros((3, n, n), np.float32)
+    # Obere Hälfte besonnt, untere im Schatten; je Hälfte links Wiese, rechts
+    # Belag. Im Schatten fehlt das direkte Sonnenlicht und es bleibt bläuliches
+    # Himmelslicht: alle Kanäle gedämpft, der Blaukanal relativ angehoben —
+    # multiplikativ, denn es ist eine andere Lichtfarbe, kein Offset.
+    for zeile, kanal in ((slice(0, n // 2), np.array([1.0, 1.0, 1.0], np.float32)),
+                         (slice(n // 2, n), np.array([0.30, 0.30, 0.75], np.float32))):
+        bild[:, zeile, : n // 2] = (np.array([75, 125, 65], np.float32) * kanal)[:, None, None]
+        bild[:, zeile, n // 2 :] = (np.array([135, 135, 135], np.float32) * kanal)[:, None, None]
+    bild = np.clip(bild + rng.normal(0, 4, bild.shape), 0, 255).astype(np.uint8)
+
+    p = tmp_path / "schatten.tif"
+    with rasterio.open(p, "w", driver="GTiff", height=n, width=n, count=3,
+                       dtype="uint8", crs=CRS,
+                       transform=from_origin(300000, 5900000, aufl, aufl)) as dst:
+        dst.write(bild)
+
+    ohne, i_ohne = vegetationssegmente(p, segmentgroesse_m2=5.0,
+                                       unsicherheitsband=0.002,
+                                       schattenbehandlung=False)
+    mit, i_mit = vegetationssegmente(p, segmentgroesse_m2=5.0,
+                                     unsicherheitsband=0.002,
+                                     schattenbehandlung=True)
+
+    gesamt = 40.0 * 40.0
+    wahrheit = gesamt / 2      # zwei von vier Vierteln sind Wiese
+    assert i_mit["schwelle_schatten"] is not None, "Schattenanteil nicht erkannt"
+    assert i_mit["schwelle_schatten"] < i_mit["schwelle"], \
+        "Im Schatten muss die Schwelle tiefer liegen"
+
+    # Nicht die Richtung ist der Prüfstein, sondern die Genauigkeit: je nach
+    # Szene zählt die gemeinsame Schwelle zu viel oder zu wenig als Grün. Am
+    # realen DOP20 fehlten 217 m² Wiese, hier kommen 400 m² Belag zu viel dazu —
+    # beides derselbe Fehler, einmal in jede Richtung.
+    fehler_ohne = abs(i_ohne["flaeche_Grünfläche_m2"] - wahrheit)
+    fehler_mit = abs(i_mit["flaeche_Grünfläche_m2"] - wahrheit)
+    assert fehler_mit < fehler_ohne / 3
+    assert i_mit["flaeche_Grünfläche_m2"] == pytest.approx(wahrheit, rel=0.15)

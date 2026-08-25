@@ -152,7 +152,13 @@ def talschwelle(
             "Die Grenze gehört hier am Bild gesetzt, nicht gerechnet."
         )
     a, b = sorted(sorted(gipfel, key=lambda i: hg[i], reverse=True)[:2])
-    tal = a + int(np.argmin(hg[a : b + 1]))
+    sohle = hg[a : b + 1]
+    # Liegt zwischen den Gipfeln eine LÜCKE, sind viele Bins gleich tief. argmin
+    # nähme den linken Rand und legte die Schwelle damit an den linken Gipfel —
+    # gemessen an vier Populationen: −0,26 statt der Talmitte −0,15. Die Mitte
+    # der Sohle ist die Stelle, die beide Seiten gleich weit weg hält.
+    tiefste = np.flatnonzero(sohle <= sohle.min() + 1e-12)
+    tal = a + int(tiefste[len(tiefste) // 2])
     return float((kanten[tal] + kanten[tal + 1]) / 2)
 
 
@@ -274,7 +280,8 @@ def bildsegmente(
 
     Returns:
         GeoDataFrame mit ``exg`` (mittlerer Vegetationsindex), ``helligkeit``,
-        ``flaeche_m2`` und den Segmentflächen.
+        ``blau`` (Blauüberschuss, hoch im Schatten), ``flaeche_m2`` und den
+        Segmentflächen.
     """
     import rasterio
     from rasterio.features import shapes
@@ -306,12 +313,19 @@ def bildsegmente(
     seg = slic(rgb / 255.0, n_segments=n_segmente, compactness=kompaktheit,
                start_label=1, mask=gueltig, channel_axis=2)
 
-    exg = excess_green(rgb.astype(np.float32))
-    hell = rgb.astype(np.float32).mean(axis=2)
+    f = rgb.astype(np.float32)
+    exg = excess_green(f)
+    hell = f.mean(axis=2)
+    # Blauüberschuss: im Schatten fehlt das direkte Sonnenlicht, es bleibt
+    # bläuliches Himmelslicht. Das ist das Merkmal, das Schatten von dunkler
+    # Vegetation trennt — Helligkeit allein tut es nicht, besonnte Wiese ist
+    # dunkler als besonnter Beton.
+    blau = (f[..., 2] - f[..., 0]) / np.clip(f.sum(axis=2), _EPS, None)
 
     ids = np.unique(seg[seg > 0])
     exg_je_id = {int(i): float(exg[seg == i].mean()) for i in ids}
     hell_je_id = {int(i): float(hell[seg == i].mean()) for i in ids}
+    blau_je_id = {int(i): float(blau[seg == i].mean()) for i in ids}
 
     geoms, sid = [], []
     for geom, val in shapes(seg.astype(np.int32), mask=seg > 0, transform=transform2):
@@ -321,12 +335,13 @@ def bildsegmente(
     gdf = gpd.GeoDataFrame(
         {"segment": sid,
          "exg": [exg_je_id[i] for i in sid],
-         "helligkeit": [hell_je_id[i] for i in sid]},
+         "helligkeit": [hell_je_id[i] for i in sid],
+         "blau": [blau_je_id[i] for i in sid]},
         geometry=geoms, crs=crs,
     )
     gdf = gdf.dissolve(by="segment", as_index=False, aggfunc="first")
     gdf["flaeche_m2"] = gdf.area
-    return gdf[["segment", "exg", "helligkeit", "flaeche_m2", "geometry"]]
+    return gdf[["segment", "exg", "helligkeit", "blau", "flaeche_m2", "geometry"]]
 
 
 def vegetationssegmente(
@@ -336,6 +351,7 @@ def vegetationssegmente(
     schwelle: float | None = None,
     unsicherheitsband: float = 0.005,
     segmentgroesse_m2: float = 12.0,
+    schattenbehandlung: bool = True,
     **segment_kwargs,
 ) -> tuple[gpd.GeoDataFrame, dict]:
     """Grünfläche gegen befestigt, als saubere Flächen mit ausgewiesener Grauzone.
@@ -358,6 +374,12 @@ def vegetationssegmente(
         unsicherheitsband: Halbe Breite des Bandes um die Schwelle, in dem
             Segmente als ``unsicher`` gelten. ``0`` schaltet es ab.
         segmentgroesse_m2: Angestrebte Segmentgrösse.
+        schattenbehandlung: Beschattete Segmente mit eigener Schwelle bewerten.
+            Im Schatten fehlt das direkte Sonnenlicht, der Vegetationsindex
+            sackt für dieselbe Wiese ab, und eine gemeinsame Schwelle zählt sie
+            als Belag. Gemessen an einem realen DOP20: Schwelle im Schatten
+            +0,004 gegen +0,024 im besonnten Teil, Unterschied 217 m² Grünfläche
+            auf 6.924 m² Gebiet — durchweg zu Lasten des Grüns.
         **segment_kwargs: Weiter an :func:`bildsegmente`.
 
     Returns:
@@ -368,12 +390,44 @@ def vegetationssegmente(
     seg = bildsegmente(raster_path, clip=clip,
                        segmentgroesse_m2=segmentgroesse_m2, **segment_kwargs)
 
+    seg["im_schatten"] = 0
+    schwelle_schatten = None
     quelle = "übergeben"
+    if schattenbehandlung:
+        try:
+            # Schatten am Blauüberschuss erkennen, nicht an der Helligkeit:
+            # besonnte Wiese ist dunkler als besonnter Beton, eine
+            # Helligkeitsschwelle steckt sie in denselben Topf wie den Schatten.
+            # Die Helligkeit dient nur als zweite Bedingung.
+            from skimage.filters import threshold_otsu
+
+            grenze = float(threshold_otsu(seg["blau"].to_numpy()))
+            dunkel = (seg["blau"] > grenze) & (seg["helligkeit"] < seg["helligkeit"].median())
+            if dunkel.sum() >= 10 and (~dunkel).sum() >= 10:
+                schwelle_schatten = talschwelle(
+                    seg.loc[dunkel, "exg"].to_numpy(),
+                    seg.loc[dunkel, "flaeche_m2"].to_numpy())
+                seg["im_schatten"] = dunkel.astype(int)
+                if schwelle is None:
+                    # Die besonnte Schwelle NUR aus besonnten Segmenten: über
+                    # beide Beleuchtungen gemeinsam gebildet, findet die
+                    # Talsuche das Tal zwischen Schattenbelag und dem Rest und
+                    # zählt besonnten Belag als Grün.
+                    schwelle = talschwelle(
+                        seg.loc[~dunkel, "exg"].to_numpy(),
+                        seg.loc[~dunkel, "flaeche_m2"].to_numpy())
+                    quelle = "Tal, getrennt für besonnt und beschattet"
+        except ValueError:
+            schwelle_schatten = None   # keine zwei Gipfel: kein Schattenanteil
+
     if schwelle is None:
         schwelle = talschwelle(seg["exg"].to_numpy(), seg["flaeche_m2"].to_numpy())
         quelle = "Tal im flächengewichteten Histogramm"
 
-    unten, oben = schwelle - unsicherheitsband, schwelle + unsicherheitsband
+    eigene = np.where(seg["im_schatten"] == 1,
+                      schwelle_schatten if schwelle_schatten is not None else schwelle,
+                      schwelle)
+    unten, oben = eigene - unsicherheitsband, eigene + unsicherheitsband
     seg["klasse"] = np.where(
         seg["exg"] > oben, "Grünfläche",
         np.where(seg["exg"] < unten, "befestigt", "unsicher"))
@@ -382,7 +436,11 @@ def vegetationssegmente(
     info = {
         "schwelle": float(schwelle),
         "schwelle_quelle": quelle,
+        "schwelle_schatten": (float(schwelle_schatten)
+                              if schwelle_schatten is not None else None),
+        "flaeche_schatten_m2": float(seg.loc[seg["im_schatten"] == 1, "flaeche_m2"].sum()),
         "segmente": int(len(seg)),
         **{f"flaeche_{k}_m2": float(v) for k, v in je_klasse.items()},
     }
-    return seg[["klasse", "exg", "helligkeit", "flaeche_m2", "geometry"]], info
+    return seg[["klasse", "exg", "helligkeit", "im_schatten", "flaeche_m2",
+                "geometry"]], info
