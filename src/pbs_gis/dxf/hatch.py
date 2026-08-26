@@ -14,6 +14,7 @@ extraction in :mod:`pbs_gis.dxf.extract`.
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
 import geopandas as gpd
@@ -25,6 +26,13 @@ from pbs_gis.dxf.read import CadReadError, read_cad
 # Chord error when flattening arcs and splines. 2 cm is far below the drawing
 # accuracy of a design plan and keeps a 100 m arc within a square centimetre.
 DEFAULT_FLATTENING = 0.02
+
+# A hatch bounds one area: an outer loop plus its holes. Loops beyond this many
+# say the boundary was taken over a whole drawing rather than around an area —
+# the union over them costs quadratic time and yields an extent far outside the
+# site, so the number it produces would be meaningless even if it returned.
+# Sound hatches measured in office drawings stay under 100 loops.
+DEFAULT_MAX_BOUNDARY_PATHS = 1000
 
 # UTM zone prefixes CAD drawings carry in X (33 for EPSG:25833, 32 for 25832).
 _ZONE_SHIFT = {"25833": 33_000_000, "25832": 32_000_000}
@@ -38,6 +46,8 @@ def extract_hatch_areas(
     strip_zone: bool = False,
     flattening: float = DEFAULT_FLATTENING,
     dissolve: bool = False,
+    max_boundary_paths: int = DEFAULT_MAX_BOUNDARY_PATHS,
+    on_degenerate: str = "raise",
 ) -> gpd.GeoDataFrame:
     """Read HATCH entities as polygons, one row per hatch.
 
@@ -50,15 +60,23 @@ def extract_hatch_areas(
         dissolve: Return one row per layer (hatches unioned) instead of one per
             hatch. Areas that touch are merged, so the layer total no longer
             double-counts an overlap.
+        max_boundary_paths: Loop count above which a hatch counts as degenerate.
+        on_degenerate: ``"raise"`` reports a degenerate hatch as an error;
+            ``"skip"`` omits it and warns, which is what a drawing needs whose
+            sound hatches share a layer with a broken one.
 
     Returns:
         GeoDataFrame with columns ``layer``, ``area_m2``, ``geometry``.
 
     Raises:
         CadReadError: A requested layer holds no hatch — a silently empty result
-            is indistinguishable from a misspelt layer name.
+            is indistinguishable from a misspelt layer name. Also when a hatch
+            exceeds *max_boundary_paths* and *on_degenerate* is ``"raise"``.
     """
     from ezdxf import path as ezpath
+
+    if on_degenerate not in ("raise", "skip"):
+        raise ValueError(f"on_degenerate: expected 'raise' or 'skip', got {on_degenerate!r}")
 
     doc = read_cad(dxf_path)
 
@@ -80,6 +98,20 @@ def extract_hatch_areas(
         if entity.dxftype() != "HATCH":
             continue
         if wanted is not None and entity.dxf.layer not in wanted:
+            continue
+
+        loops = len(entity.paths)
+        if loops > max_boundary_paths:
+            detail = (
+                f"hatch on layer {entity.dxf.layer!r} has {loops} boundary loops "
+                f"(limit {max_boundary_paths}) — its boundary was not drawn around "
+                f"an area; the area it would yield is not a measurement"
+            )
+            if on_degenerate == "raise":
+                raise CadReadError(
+                    detail + ". Pass on_degenerate='skip' to read the rest of the drawing."
+                )
+            warnings.warn(detail + " — skipped.", stacklevel=2)
             continue
 
         geom = _hatch_to_polygon(entity, ezpath, shift, flattening)

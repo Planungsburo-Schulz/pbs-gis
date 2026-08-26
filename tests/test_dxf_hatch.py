@@ -119,3 +119,56 @@ def test_strip_zone_rejects_a_crs_without_known_prefix(tmp_path: Path) -> None:
 
     with pytest.raises(CadReadError, match="no zone prefix known"):
         extract_hatch_areas(path, crs="EPSG:4326", strip_zone=True)
+
+
+def _degenerate_dxf(tmp_path: Path, n_paths: int) -> Path:
+    """One sound hatch plus one whose boundary is *n_paths* separate loops.
+
+    The shape a broken drawing delivers: a hatch created over a whole plan
+    instead of over one area, so its boundary is thousands of unrelated loops.
+    Reading it is not merely slow — the union over those loops does not return
+    in any usable time, and a caller cannot tell that from a large drawing.
+    """
+    doc = ezdxf.new("R2010")
+    msp = doc.modelspace()
+    _add_hatch(msp, "SRF_GUT", [(0, 0), (10, 0), (10, 10), (0, 10)])
+
+    h = msp.add_hatch(dxfattribs={"layer": "SRF_KAPUTT"})
+    for i in range(n_paths):
+        x, y = (i % 200) * 3.0, (i // 200) * 3.0
+        h.paths.add_polyline_path(
+            [(x, y), (x + 1, y), (x + 1, y + 1), (x, y + 1)], is_closed=True
+        )
+    path = tmp_path / f"degenerate_{n_paths}.dxf"
+    doc.saveas(path)
+    return path
+
+
+def test_degenerate_hatch_is_reported_not_read(tmp_path: Path) -> None:
+    path = _degenerate_dxf(tmp_path, 1500)
+
+    with pytest.raises(CadReadError, match="SRF_KAPUTT"):
+        extract_hatch_areas(path, crs=CRS)
+
+
+def test_degenerate_hatch_can_be_skipped_keeping_the_rest(tmp_path: Path) -> None:
+    path = _degenerate_dxf(tmp_path, 1500)
+
+    with pytest.warns(UserWarning, match="SRF_KAPUTT"):
+        gdf = extract_hatch_areas(path, crs=CRS, on_degenerate="skip")
+
+    assert list(gdf["layer"]) == ["SRF_GUT"]
+    assert gdf["area_m2"].sum() == pytest.approx(100.0, abs=0.01)
+
+
+def test_a_hatch_below_the_limit_is_still_read(tmp_path: Path) -> None:
+    """The guard must not fire on a hatch that is merely detailed.
+
+    Without this case the limit could sit anywhere — a guard that also rejects
+    sound input trains the habit of switching it off.
+    """
+    path = _degenerate_dxf(tmp_path, 40)
+
+    gdf = extract_hatch_areas(path, crs=CRS)
+
+    assert set(gdf["layer"]) == {"SRF_GUT", "SRF_KAPUTT"}
