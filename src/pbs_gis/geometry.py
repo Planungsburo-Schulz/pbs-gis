@@ -304,6 +304,21 @@ def remove_spikes(gdf: gpd.GeoDataFrame, *, max_area_m2: float = 0.01,
     return out
 
 
+def _flaechig(geom):
+    """Den flaechigen Teil einer Geometrie — eine GeometryCollection aus
+    Polygon und Beruehrungslinie (wie ein Schnitt sie hinterlaesst, wo eine
+    Flaeche die Grenze nicht nur kreuzt, sondern auch beruehrt) hat
+    ``.boundary is None``; ihr Polygonanteil hat einen Rand wie jede Flaeche.
+    Leer, wenn nichts Flaechiges enthalten ist."""
+    from shapely.geometry import GeometryCollection, MultiPolygon, Polygon
+    if isinstance(geom, (Polygon, MultiPolygon)):
+        return geom
+    if isinstance(geom, GeometryCollection):
+        teile = [t for t in geom.geoms if isinstance(t, (Polygon, MultiPolygon))]
+        return unary_union(teile) if teile else Polygon()
+    return Polygon()
+
+
 def _teile_luecke(luecke, geoms, nachbarn, tolerance_m, schrittweite_m: float = 0.1):
     """Eine Luecke unter mehreren Nachbarn aufteilen: jeder Ort an den naechsten.
 
@@ -323,9 +338,7 @@ def _teile_luecke(luecke, geoms, nachbarn, tolerance_m, schrittweite_m: float = 
     huelle = luecke.buffer(tolerance_m)
     punkte, besitzer = [], []
     for i in nachbarn:
-        rand = geoms[i].boundary
-        if rand is None:
-            continue
+        rand = _flaechig(geoms[i]).boundary
         anliegend = rand.intersection(huelle)
         if anliegend.is_empty:
             continue
@@ -468,13 +481,12 @@ def close_gaps(
         huelle = p.buffer(tolerance_m)
         # A GeometryCollection has ``.boundary is None`` — and one arrives as soon
         # as a caller hands in clipped surfaces, where a polygon and the line it
-        # touched the clip edge along end up in one geometry. A neighbour whose
-        # boundary cannot be taken is passed over, never a reason to end the run.
+        # touched the clip edge along end up in one geometry. Its polygonal part
+        # is the neighbour; skipping the row instead made that surface invisible
+        # to every gap beside it, and each of them went to somebody else.
         kandidaten = []
         for i in baum.query(huelle):
-            rand = geoms[i].boundary
-            if rand is None:
-                continue
+            rand = _flaechig(geoms[i]).boundary
             laenge = rand.intersection(huelle).length
             if laenge > 0:
                 kandidaten.append((laenge, i))
@@ -490,13 +502,23 @@ def close_gaps(
         # das Material des Nachbarn, und die zerschnittene Flaeche bliebe
         # zerschnitten. Der Fall geht dem Aufteilen vor.
         if klassen is not None:
+            # Gezaehlt werden die anliegenden TEILE einer Klasse, nicht ihre
+            # Zeilen: ein Aufrufer, der je Belag eine Zeile fuehrt, traegt die
+            # zerschnittene Flaeche als Multipolygon — zwei Stuecke, eine
+            # Zeile — und der Schnitt bliebe sonst unerkannt.
             nach_klasse: dict = {}
             for laenge, i in kandidaten:
-                nach_klasse.setdefault(klassen[i], []).append((laenge, i))
-            geteilte = {k: v for k, v in nach_klasse.items() if len(v) >= 2}
+                flaeche_i = _flaechig(geoms[i])
+                teile_i = [t for t in getattr(flaeche_i, "geoms", [flaeche_i])
+                           if t.boundary.intersection(huelle).length > 0]
+                eintrag = nach_klasse.setdefault(klassen[i], {"teile": 0, "laenge": 0.0, "zeilen": []})
+                eintrag["teile"] += max(1, len(teile_i))
+                eintrag["laenge"] += laenge
+                eintrag["zeilen"].append((laenge, i))
+            geteilte = {k: v for k, v in nach_klasse.items() if v["teile"] >= 2}
             if geteilte:
-                beste = max(geteilte, key=lambda k: sum(l for l, _ in geteilte[k]))
-                zuwachs.setdefault(max(geteilte[beste])[1], []).append(p)
+                beste = max(geteilte, key=lambda k: geteilte[k]["laenge"])
+                zuwachs.setdefault(max(geteilte[beste]["zeilen"])[1], []).append(p)
                 continue
         teile = _teile_luecke(p, geoms, [i for _, i in kandidaten], tolerance_m)
         if teile is None:
@@ -511,7 +533,7 @@ def close_gaps(
         # eine Spitze ohne Breite stehen. Gemessen an einer realen Bestandskarte
         # entstanden so 52 Spikes aus 6 — sie sind Erzeugnis dieses Schritts und
         # werden hier beseitigt, nicht dem Aufrufer ueberlassen.
-        geoms[i] = remove_spikes_geom(unary_union([geoms[i], *stuecke_i]),
+        geoms[i] = remove_spikes_geom(unary_union([_flaechig(geoms[i]), *stuecke_i]),
                                       max_area_m2=spike_area_m2)
 
     out = gdf.copy()

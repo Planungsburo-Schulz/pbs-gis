@@ -174,3 +174,58 @@ def test_schnitt_durch_eine_flaeche_geht_ganz_an_sie():
     assert flaeche["Gruen"] == pytest.approx(oben.area + unten.area + 9.0, abs=0.01)
     assert flaeche["Decke"] == pytest.approx(fremd.area, abs=0.01), \
         "die fremde Klasse hat einen Teil des Schnitts bekommen"
+
+
+def test_schnitt_durch_eine_flaeche_auch_als_multipolygon():
+    """Dieselbe Lage, aber die zerschnittene Klasse liegt als EINE Zeile vor.
+
+    Ein Aufrufer, der je Belag eine Zeile fuehrt (dissolved), traegt beide
+    Stuecke als Multipolygon. Der Schnitt muss auch dann als Schnitt erkannt
+    werden — er trennt Teile derselben Flaeche, nicht zwei Zeilen.
+    """
+    from shapely.geometry import MultiPolygon
+
+    oben = Polygon([(0, 6), (30, 6), (30, 10), (0, 10)])
+    unten = Polygon([(0, 0), (20, 0), (20, 5.7), (0, 5.7)])
+    fremd = Polygon([(20, 0), (30, 0), (30, 5.7), (20, 5.7)])
+    gdf = gpd.GeoDataFrame(
+        {"belag": ["Gruen", "Decke"]},
+        geometry=[MultiPolygon([oben, unten]), fremd],
+        crs=CRS,
+    )
+    bereich = Polygon([(0, 0), (30, 0), (30, 10), (0, 10)])
+
+    out, info = close_gaps(gdf, bereich, split_between_neighbours=True,
+                           class_column="belag")
+
+    flaeche = dict(zip(out["belag"], out.area))
+    assert flaeche["Gruen"] == pytest.approx(oben.area + unten.area + 9.0, abs=0.01)
+    assert flaeche["Decke"] == pytest.approx(fremd.area, abs=0.01), \
+        "die fremde Klasse hat einen Teil des Schnitts bekommen"
+
+
+def test_nachbar_als_geometrycollection_bleibt_sichtbar():
+    """Ein Nachbar, der als GeometryCollection (Polygon + Linie) vorliegt, zaehlt.
+
+    Ein Schnitt auf den Bereich hinterlaesst genau das, wo eine Flaeche die
+    Grenze beruehrt. ``.boundary`` einer Collection ist None; die Flaeche darf
+    darum nicht unsichtbar werden — sonst geht jede Luecke neben ihr an den
+    anderen Nachbarn, auch wo sie fast ganz an ihr liegt.
+    """
+    from shapely.geometry import GeometryCollection, LineString
+
+    links = Polygon([(0, 0), (4.7, 0), (4.7, 10), (0, 10)])
+    rechts = Polygon([(5, 0), (10, 0), (10, 1), (5, 1)])
+    gdf = gpd.GeoDataFrame(
+        {"belag": ["Gruen", "Decke"]},
+        geometry=[GeometryCollection([links, LineString([(0, 10), (2, 10)])]), rechts],
+        crs=CRS,
+    )
+    bereich = Polygon([(0, 0), (10, 0), (10, 1), (5, 1), (5, 10), (0, 10)])
+
+    out, info = close_gaps(gdf, bereich, split_between_neighbours=False)
+
+    flaeche = dict(zip(out["belag"], out.area))
+    # Die Ritze 4,7–5 x 0–10 (3 m²) grenzt 10 m an Gruen, 1 m an Decke.
+    assert flaeche["Gruen"] == pytest.approx(links.area + 3.0, abs=0.01)
+    assert flaeche["Decke"] == pytest.approx(rechts.area, abs=0.01)
