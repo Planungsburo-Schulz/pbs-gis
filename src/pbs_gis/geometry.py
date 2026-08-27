@@ -317,6 +317,122 @@ def remove_spikes_geom(geom, *, max_area_m2: float = 0.01, max_angle_deg: float 
     return sauber if sauber is not None and not sauber.is_empty else geom
 
 
+def _nadel_dreiecke(geom, max_area_m2, max_angle_deg):
+    """Die Nadeln eines Polygons als Dreiecke (Basis a, Spitze b, Basis c)."""
+    import math
+
+    dreiecke = []
+    for p in getattr(geom, "geoms", [geom]):
+        if not isinstance(p, Polygon):
+            continue
+        for ring in [p.exterior, *p.interiors]:
+            pts = list(ring.coords)[:-1]
+            for i in range(len(pts)):
+                a, b, c = pts[i - 1], pts[i], pts[(i + 1) % len(pts)]
+                v1 = (a[0] - b[0], a[1] - b[1])
+                v2 = (c[0] - b[0], c[1] - b[1])
+                n1, n2 = math.hypot(*v1), math.hypot(*v2)
+                if n1 == 0 or n2 == 0:
+                    continue
+                cos = max(-1.0, min(1.0, (v1[0] * v2[0] + v1[1] * v2[1]) / (n1 * n2)))
+                flaeche = abs(v1[0] * v2[1] - v1[1] * v2[0]) / 2
+                if math.degrees(math.acos(cos)) < max_angle_deg and flaeche <= max_area_m2:
+                    tri = Polygon([a, b, c])
+                    if tri.is_valid and not tri.is_empty:
+                        dreiecke.append(tri)
+    return dreiecke
+
+
+def transfer_spikes(
+    gdf: gpd.GeoDataFrame,
+    *,
+    max_area_m2: float = 0.15,
+    max_angle_deg: float = 5.0,
+    runden: int = 5,
+) -> tuple[gpd.GeoDataFrame, dict]:
+    """
+    Hand each needle to the neighbour it points into — the partition stays exact.
+
+    :func:`remove_spikes` DROPS the tip vertex, which straightens the boundary
+    from one base point to the other; wherever that straight line runs through
+    the neighbour, the neighbour's area is now claimed twice (measured: 0,0497 m²
+    of overlap reappearing after a clean run). Here the needle is cut out as the
+    TRIANGLE base–tip–base and unioned onto the polygon that borders its legs —
+    nothing is invented and nothing is dropped, so overlap and coverage cannot
+    change by construction. A needle with no neighbour along its legs (it points
+    into the void) stays: taking it away would tear a hole.
+
+    Both criteria of :func:`remove_spikes_geom` apply: tip angle under
+    *max_angle_deg* AND triangle area at most *max_area_m2* — a genuine acute
+    corner of a plan encloses real area and is kept however sharp.
+
+    Args:
+        gdf: Polygons of one partition; attributes are kept.
+        max_area_m2: Largest triangle that counts as a needle.
+        max_angle_deg: Largest tip angle that counts as a needle.
+        runden: Passes; cutting one needle can expose a shorter one at its base.
+
+    Returns:
+        ``(GeoDataFrame, info)`` with ``uebergeben`` (count), ``uebergeben_m2``
+        and ``geblieben`` (needles without a neighbour).
+    """
+    from shapely.strtree import STRtree
+
+    geoms = list(gdf.geometry)
+    n_uebergeben, m2, geblieben = 0, 0.0, 0
+    for runde in range(runden):
+        getan = False
+        baum = STRtree(geoms)
+        for i, g in enumerate(geoms):
+            if g is None or g.is_empty:
+                continue
+            for tri in _nadel_dreiecke(g, max_area_m2, max_angle_deg):
+                flaeche_g = _flaechig(g)
+                innen = tri.intersection(flaeche_g)
+                nach_aussen = innen.area >= tri.area / 2
+                huelle = tri.buffer(1e-3)
+                # Der Nachbar, dem die Nadel gehoert: an ihren Schenkeln (Nadel
+                # heraus) bzw. der sie ausfuellt (Kerbe hinein — dieselbe Nadel
+                # von der anderen Seite gesehen, deren eigene Spitze stumpfer
+                # sein kann als der Schwellwert).
+                beste, mass = None, 0.0
+                for j in baum.query(huelle):
+                    if j == i or geoms[j] is None or geoms[j].is_empty:
+                        continue
+                    fj = _flaechig(geoms[j])
+                    m = (fj.boundary.intersection(huelle).length if nach_aussen
+                         else tri.intersection(fj).area)
+                    if m > mass:
+                        beste, mass = j, m
+                if beste is None or mass <= 0:
+                    if runde == 0:
+                        geblieben += 1
+                    continue
+                if nach_aussen:
+                    stueck = innen
+                    if stueck.is_empty or stueck.area <= 0:
+                        continue
+                    geoms[i] = _flaechig(g.difference(stueck))
+                    geoms[beste] = _flaechig(unary_union([geoms[beste], stueck]))
+                else:
+                    stueck = tri.intersection(_flaechig(geoms[beste]))
+                    if stueck.is_empty or stueck.area <= 0:
+                        continue
+                    geoms[beste] = _flaechig(geoms[beste].difference(stueck))
+                    geoms[i] = _flaechig(unary_union([g, stueck]))
+                g = geoms[i]
+                n_uebergeben += 1
+                m2 += stueck.area
+                getan = True
+        if not getan:
+            break
+
+    out = gdf.copy()
+    out["geometry"] = geoms
+    out = out[out.geometry.notna() & ~out.geometry.is_empty].reset_index(drop=True)
+    return out, {"uebergeben": n_uebergeben, "uebergeben_m2": m2, "geblieben": geblieben}
+
+
 def remove_spikes(gdf: gpd.GeoDataFrame, *, max_area_m2: float = 0.01,
                   max_angle_deg: float = 5.0) -> gpd.GeoDataFrame:
     """Apply :func:`remove_spikes_geom` to every row; attributes are kept."""
