@@ -144,3 +144,33 @@ def test_geometrycollection_beendet_den_lauf_nicht():
 
     assert len(out) == 2
     assert info["geschlossen"] + info["offen"] == 1
+
+
+def test_schnitt_durch_eine_flaeche_geht_ganz_an_sie():
+    """Eine Luecke mit DERSELBEN Klasse auf beiden Seiten trennt nicht, sie schneidet.
+
+    Der Streifen laeuft ueber die volle Breite zwischen zwei Gruenflaechen-
+    Stuecken hindurch; auf seinem rechten Drittel liegt unten eine andere
+    Klasse. Geteilt bekaeme er dort deren Material — und die zerschnittene
+    Gruenflaeche bliebe zerschnitten.
+    """
+    oben = Polygon([(0, 6), (30, 6), (30, 10), (0, 10)])
+    unten = Polygon([(0, 0), (20, 0), (20, 5.7), (0, 5.7)])
+    fremd = Polygon([(20, 0), (30, 0), (30, 5.7), (20, 5.7)])
+    gdf = gpd.GeoDataFrame(
+        {"belag": ["Gruen", "Gruen", "Decke"]},
+        geometry=[oben, unten, fremd],
+        crs=CRS,
+    )
+    bereich = Polygon([(0, 0), (30, 0), (30, 10), (0, 10)])
+
+    out, info = close_gaps(gdf, bereich, split_between_neighbours=True,
+                           class_column="belag")
+
+    flaeche = {}
+    for b, a in zip(out["belag"], out.area):
+        flaeche[b] = flaeche.get(b, 0) + a
+    # Der ganze Streifen (30 x 0,3 m) gehoert der zerschnittenen Gruenflaeche.
+    assert flaeche["Gruen"] == pytest.approx(oben.area + unten.area + 9.0, abs=0.01)
+    assert flaeche["Decke"] == pytest.approx(fremd.area, abs=0.01), \
+        "die fremde Klasse hat einen Teil des Schnitts bekommen"

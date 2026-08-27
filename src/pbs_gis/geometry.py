@@ -357,10 +357,17 @@ def _teile_luecke(luecke, geoms, nachbarn, tolerance_m, schrittweite_m: float = 
 
     ergebnis = []
     gedeckt = 0.0
+    vergeben = None
     for i, zellen_i in nach_besitzer.items():
         stueck = unary_union(zellen_i).intersection(luecke)
+        # Benachbarte Voronoi-Zellen teilen ihre Naht; ungekuerzt zaehlt sie zu
+        # beiden Seiten und die Aufteilung erzeugt genau die Ueberlappung, die
+        # der ganze Schritt vermeiden soll (gemessen 0,0153 m²).
+        if vergeben is not None:
+            stueck = stueck.difference(vergeben)
         if stueck.is_empty or stueck.area <= 0:
             continue
+        vergeben = stueck if vergeben is None else unary_union([vergeben, stueck])
         ergebnis.append((i, stueck))
         gedeckt += stueck.area
 
@@ -379,6 +386,7 @@ def close_gaps(
     tolerance_m: float = 0.001,
     spike_area_m2: float = 0.01,
     split_between_neighbours: bool = False,
+    class_column: str | None = None,
 ) -> tuple[gpd.GeoDataFrame, dict]:
     """
     Close the cracks in a partition: each gap goes to its longest-bordering neighbour.
@@ -410,6 +418,12 @@ def close_gaps(
         area: The region the partition is meant to fill (a Polygon).
         max_width_m: Gaps wider than this stay open.
         tolerance_m: How far a neighbour may sit from the gap.
+        class_column: Column naming each polygon's surface class. With it, a gap
+            whose neighbours include two polygons of the SAME class is read as a
+            CUT THROUGH one surface rather than a boundary between two, and goes
+            to that class whole. Split instead, such a cut would carry the
+            neighbour's material along half its length and the surface it cuts
+            would stay cut. This case takes precedence over the split.
         split_between_neighbours: Split a gap that borders more than one surface
             and give each part to its nearest neighbour, rather than handing the
             whole gap to the one it shares the longest border with. A crack
@@ -439,6 +453,7 @@ def close_gaps(
         return gdf.reset_index(drop=True), {
             "geschlossen": 0, "geschlossen_m2": 0.0, "offen": 0, "offen_m2": 0.0}
 
+    klassen = list(gdf[class_column]) if class_column else None
     rest = area.difference(unary_union(geoms))
     stuecke = [p for p in getattr(rest, "geoms", [rest])
                if not p.is_empty and p.length > 0]
@@ -469,6 +484,20 @@ def close_gaps(
         if len(kandidaten) == 1 or not split_between_neighbours:
             zuwachs.setdefault(max(kandidaten)[1], []).append(p)
             continue
+        # Liegen auf beiden Seiten Flaechen DERSELBEN Klasse, dann trennt die
+        # Luecke sie nicht, sondern zerschneidet EINE Flaeche. Sie geht dann
+        # ganz an diese Klasse — geteilt bekaeme der Schnitt auf halber Laenge
+        # das Material des Nachbarn, und die zerschnittene Flaeche bliebe
+        # zerschnitten. Der Fall geht dem Aufteilen vor.
+        if klassen is not None:
+            nach_klasse: dict = {}
+            for laenge, i in kandidaten:
+                nach_klasse.setdefault(klassen[i], []).append((laenge, i))
+            geteilte = {k: v for k, v in nach_klasse.items() if len(v) >= 2}
+            if geteilte:
+                beste = max(geteilte, key=lambda k: sum(l for l, _ in geteilte[k]))
+                zuwachs.setdefault(max(geteilte[beste])[1], []).append(p)
+                continue
         teile = _teile_luecke(p, geoms, [i for _, i in kandidaten], tolerance_m)
         if teile is None:
             zuwachs.setdefault(max(kandidaten)[1], []).append(p)
@@ -494,6 +523,122 @@ def close_gaps(
         "offen_m2": sum(p.area for p in offen),
     }
     return out.reset_index(drop=True), info
+
+
+def weld_fragments(
+    gdf: gpd.GeoDataFrame,
+    class_column: str,
+    *,
+    max_fragment_m2: float = 0.1,
+    tolerance_m: float = 0.1,
+    bridge_m: float = 0.01,
+) -> tuple[gpd.GeoDataFrame, dict]:
+    """
+    Weld a fragment onto the same-class surface it touches, so one class is one polygon.
+
+    Two lobes meeting at a single POINT cannot be one polygon — that geometry is
+    invalid — so a union leaves them side by side, and the map shows a dividing
+    line through a surface that has none. The same happens a hair's breadth
+    apart, where the union has nothing to join at all. Both arise from the same
+    source as the cracks: boundaries drawn separately that miss each other.
+
+    The fragment's vertices are SNAPPED onto its sibling within *tolerance_m*,
+    which turns a near miss into a shared edge and lets the union merge them.
+    Where that fails, a BRIDGE of width *bridge_m* is laid along the shortest
+    line between the two. It covers both cases the snap cannot: a single-point
+    contact, which can never be one polygon because the join would need width
+    and width is area; and a fragment lying beside a long straight edge, where
+    snapping finds no vertex to pull to. The area a bridge adds is reported
+    under ``zugefuegt_m2``, never left to be discovered later.
+
+    Only pieces below *max_fragment_m2* are touched, and only against a polygon
+    of their own class — no material crosses a class boundary here.
+
+    Args:
+        gdf: Single-part polygons.
+        class_column: Column whose value must match for two pieces to be welded.
+        max_fragment_m2: Largest piece that may be moved onto a sibling.
+        tolerance_m: How far a fragment may sit from its sibling.
+        bridge_m: Radius of the disc that widens a single-point contact.
+
+    Returns:
+        ``(GeoDataFrame, info)`` with ``verschweisst`` (count), ``verschweisst_m2``
+        (area welded on), ``zugefuegt_m2`` (area the bridges added) and
+        ``uebrig`` — fragments with no sibling in reach, which are a finding
+        rather than a failure.
+    """
+    from shapely.geometry import LineString
+    from shapely.ops import nearest_points, snap
+
+    if gdf.empty:
+        return gdf.reset_index(drop=True), {
+            "verschweisst": 0, "verschweisst_m2": 0.0,
+            "zugefuegt_m2": 0.0, "uebrig": 0}
+
+    geoms = list(gdf.geometry)
+    klassen = list(gdf[class_column])
+    entfaellt = set()
+    anzahl = 0
+    flaeche = 0.0
+    zugefuegt = 0.0
+    uebrig = 0
+
+    reihenfolge = sorted(range(len(geoms)), key=lambda i: geoms[i].area)
+    for i in reihenfolge:
+        if i in entfaellt or geoms[i].area > max_fragment_m2:
+            continue
+        geschwister = [
+            j for j in range(len(geoms))
+            if j != i and j not in entfaellt and klassen[j] == klassen[i]
+            and geoms[j].area > geoms[i].area
+            and geoms[i].distance(geoms[j]) <= tolerance_m
+        ]
+        if not geschwister:
+            uebrig += 1
+            continue
+        j = max(geschwister, key=lambda k: geoms[k].area)
+        soll = geoms[i].area + geoms[j].area
+        vereint = unary_union([geoms[j], snap(geoms[i], geoms[j], tolerance_m)])
+        if isinstance(vereint, Polygon) and vereint.is_valid \
+                and abs(vereint.area - soll) <= max(1e-4, soll * 1e-4):
+            anzahl += 1
+            flaeche += geoms[i].area
+            geoms[j] = vereint
+            entfaellt.add(i)
+            continue
+        # Zwei Lappen an EINEM Punkt sind kein gueltiges Polygon: die Verbindung
+        # braucht Breite. Und knapp daneben gibt es gar keine — `snap` zieht nur
+        # auf STUETZPUNKTE, nicht auf Kanten, und laesst eine Luecke neben einer
+        # langen geraden Kante unberuehrt. Beides deckt dieselbe Bruecke ab: die
+        # kuerzeste Verbindung zwischen beiden, auf *bridge_m* verbreitert. Was
+        # sie an Flaeche hinzufuegt, wird gemeldet statt verschwiegen.
+        von, nach = nearest_points(geoms[i], geoms[j])
+        bruecke = LineString([von, nach]).buffer(bridge_m)
+        # Die Bruecke darf nur fuellen, was niemandem gehoert. Ungekuerzt
+        # greift ihre Scheibe in die Nachbarflaechen und macht aus einer
+        # ueberlappungsfreien Karte eine mit Ueberlappung — gemessen 0,0017 m²,
+        # winzig und trotzdem ein gebrochenes Versprechen.
+        fremd = [geoms[k] for k in range(len(geoms))
+                 if k not in (i, j) and k not in entfaellt
+                 and geoms[k].intersects(bruecke)]
+        if fremd:
+            bruecke = bruecke.difference(unary_union(fremd))
+        vereint = unary_union([geoms[j], geoms[i], bruecke])
+        if not isinstance(vereint, Polygon) or not vereint.is_valid:
+            uebrig += 1
+            continue
+        anzahl += 1
+        flaeche += geoms[i].area
+        zugefuegt += vereint.area - soll
+        geoms[j] = vereint
+        entfaellt.add(i)
+
+    behalten = [i for i in range(len(geoms)) if i not in entfaellt]
+    out = gdf.iloc[behalten].copy()
+    out["geometry"] = [geoms[i] for i in behalten]
+    return out.reset_index(drop=True), {
+        "verschweisst": anzahl, "verschweisst_m2": flaeche,
+        "zugefuegt_m2": zugefuegt, "uebrig": uebrig}
 
 
 def to_single_part(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
