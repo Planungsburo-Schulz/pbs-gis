@@ -304,6 +304,13 @@ def remove_spikes(gdf: gpd.GeoDataFrame, *, max_area_m2: float = 0.01,
     return out
 
 
+# Anteil am Rand einer Luecke, ab dem eine Klasse mit zwei anliegenden Teilen
+# die Luecke GANZ bekommt (Schnitt durch eine Flaeche). Darunter wird nach
+# naechster Klasse aufgeteilt. Abgelesen: der Schnitt im Test haelt 5/6 des
+# Randes, der Steg-Fall 38 %.
+SCHNITT_DOMINANZ = 2 / 3
+
+
 def _flaechig(geom):
     """Den flaechigen Teil einer Geometrie — eine GeometryCollection aus
     Polygon und Beruehrungslinie (wie ein Schnitt sie hinterlaesst, wo eine
@@ -500,7 +507,11 @@ def close_gaps(
         # Luecke sie nicht, sondern zerschneidet EINE Flaeche. Sie geht dann
         # ganz an diese Klasse — geteilt bekaeme der Schnitt auf halber Laenge
         # das Material des Nachbarn, und die zerschnittene Flaeche bliebe
-        # zerschnitten. Der Fall geht dem Aufteilen vor.
+        # zerschnitten. Der Fall geht dem Aufteilen vor — aber nur, wo die
+        # Klasse den Rand der Luecke DOMINIERT. Ein Stueck, das zwischen zwei
+        # Teilen von A hindurch und als Schlitz weiter in B hineinlaeuft,
+        # grenzt ueberwiegend an B; ganz an A vergeben, steht der Schlitz als
+        # Steg von A mitten in B (gemessen: 6 cm breit, 1,5 m lang).
         if klassen is not None:
             # Gezaehlt werden die anliegenden TEILE einer Klasse, nicht ihre
             # Zeilen: ein Aufrufer, der je Belag eine Zeile fuehrt, traegt die
@@ -515,11 +526,28 @@ def close_gaps(
                 eintrag["teile"] += max(1, len(teile_i))
                 eintrag["laenge"] += laenge
                 eintrag["zeilen"].append((laenge, i))
-            geteilte = {k: v for k, v in nach_klasse.items() if v["teile"] >= 2}
+            rand_gesamt = sum(v["laenge"] for v in nach_klasse.values()) or 1.0
+            geteilte = {k: v for k, v in nach_klasse.items()
+                        if v["teile"] >= 2 and v["laenge"] / rand_gesamt >= SCHNITT_DOMINANZ}
             if geteilte:
                 beste = max(geteilte, key=lambda k: geteilte[k]["laenge"])
                 zuwachs.setdefault(max(geteilte[beste]["zeilen"])[1], []).append(p)
                 continue
+            # Aufgeteilt wird nach naechster KLASSE, nicht naechster Zeile: die
+            # Teile einer Klasse sind eine Flaeche, und ein Ort zwischen zweien
+            # davon gehoert ihr — nicht dem fremden Nachbarn, der zufaellig
+            # naeher liegt als eines der beiden.
+            klassen_liste = list(nach_klasse)
+            klassen_geoms = [unary_union([_flaechig(geoms[i]) for _, i in nach_klasse[k]["zeilen"]])
+                             for k in klassen_liste]
+            teile = _teile_luecke(p, klassen_geoms, list(range(len(klassen_liste))), tolerance_m)
+            if teile is None:
+                zuwachs.setdefault(max(kandidaten)[1], []).append(p)
+                continue
+            for k_i, stueck in teile:
+                zeile = max(nach_klasse[klassen_liste[k_i]]["zeilen"])[1]
+                zuwachs.setdefault(zeile, []).append(stueck)
+            continue
         teile = _teile_luecke(p, geoms, [i for _, i in kandidaten], tolerance_m)
         if teile is None:
             zuwachs.setdefault(max(kandidaten)[1], []).append(p)

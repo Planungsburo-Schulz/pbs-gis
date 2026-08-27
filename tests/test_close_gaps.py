@@ -229,3 +229,35 @@ def test_nachbar_als_geometrycollection_bleibt_sichtbar():
     # Die Ritze 4,7–5 x 0–10 (3 m²) grenzt 10 m an Gruen, 1 m an Decke.
     assert flaeche["Gruen"] == pytest.approx(links.area + 3.0, abs=0.01)
     assert flaeche["Decke"] == pytest.approx(rechts.area, abs=0.01)
+
+
+def test_schlitz_in_den_nachbarn_bleibt_beim_nachbarn():
+    """Eine Luecke laeuft zwischen zwei Teilen von A hindurch und als Schlitz in B.
+
+    Der Schlitz ist von B eingerahmt und gehoert B; der Teil zwischen den
+    A-Stuecken gehoert A. Ganz an A vergeben — weil A zwei Teile anlegt —
+    stuende ein Steg von A mitten in B.
+    """
+    from shapely.geometry import MultiPolygon
+
+    a_links = Polygon([(0, 5), (4.95, 5), (4.95, 10), (0, 10)])
+    a_rechts = Polygon([(5.05, 5), (10, 5), (10, 10), (5.05, 10)])
+    # B unten, mit einem 0,1 m breiten Schlitz von y=5 bis y=1 unter der Luecke.
+    b = Polygon([(0, 0), (10, 0), (10, 5), (5.05, 5), (5.05, 1),
+                 (4.95, 1), (4.95, 5), (0, 5)])
+    gdf = gpd.GeoDataFrame(
+        {"belag": ["A", "B"]},
+        geometry=[MultiPolygon([a_links, a_rechts]), b],
+        crs=CRS,
+    )
+    bereich = Polygon([(0, 0), (10, 0), (10, 10), (0, 10)])
+
+    out, info = close_gaps(gdf, bereich, split_between_neighbours=True,
+                           class_column="belag")
+
+    flaeche = dict(zip(out["belag"], out.area))
+    # Luecke zwischen A: 0,1 x 5 = 0,5 m²; Schlitz in B: 0,1 x 4 = 0,4 m².
+    assert flaeche["A"] == pytest.approx(a_links.area + a_rechts.area + 0.5, abs=0.05)
+    assert flaeche["B"] == pytest.approx(b.area + 0.4, abs=0.05)
+    a_geom = out[out["belag"] == "A"].geometry.iloc[0]
+    assert a_geom.geom_type == "Polygon", "A ist nicht zu einer Flaeche verbunden"
