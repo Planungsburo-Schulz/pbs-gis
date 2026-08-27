@@ -201,6 +201,32 @@ def subtract_smaller_overlaps(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     return out.reset_index(drop=True)
 
 
+def to_single_part(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """
+    One row per polygon: split multi-part geometries, drop area-less fragments.
+
+    A set difference can leave a line or a point behind inside a
+    GeometryCollection where two polygons touched. Such a fragment carries no
+    area but does carry the attributes of a real surface, so it would be
+    counted as one in any feature tally while contributing nothing to a sum.
+    It is removed here; the row count before and after is what shows it
+    happened.
+
+    Args:
+        gdf: GeoDataFrame with polygon geometries, possibly multi-part.
+
+    Returns:
+        GeoDataFrame of single Polygon geometries, attributes carried over.
+    """
+    if gdf.empty:
+        return gdf.reset_index(drop=True)
+
+    parts = gdf.explode(index_parts=False, ignore_index=True)
+    parts = parts[parts.geometry.notna() & ~parts.geometry.is_empty]
+    parts = parts[parts.geometry.geom_type == "Polygon"]
+    return parts.reset_index(drop=True)
+
+
 # ---------------------------------------------------------------------------
 # Line geometry operations
 # ---------------------------------------------------------------------------

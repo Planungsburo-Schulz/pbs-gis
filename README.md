@@ -206,6 +206,7 @@ All common functions importable from top level: `from pbs_gis import ...`
 - `make_valid_gdf()` — repair invalid geometries
 - `subtract_geometries()` — set difference (base minus subtract)
 - `subtract_smaller_overlaps()` — remove overlaps by area
+- `to_single_part()` — one row per polygon, area-less fragments dropped
 - `morphological_filter()` — buffer-dissolve-buffer polygon cleanup
 - `distance_to_nearest()` — min distance to reference features
 - `points_with_buffers()` — create points + buffer union from coordinate data

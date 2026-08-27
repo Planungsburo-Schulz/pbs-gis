@@ -53,6 +53,7 @@ from pbs_gis.geometry import (
     strip_utm_zone_prefix,
     subtract_geometries,
     subtract_smaller_overlaps,
+    to_single_part,
 )
 from pbs_gis.reporting import (
     area_by_category,
@@ -128,6 +129,7 @@ __all__ = [
     "make_valid_gdf",
     "subtract_geometries",
     "subtract_smaller_overlaps",
+    "to_single_part",
     "extend_line",
     "snap_endpoints",
     "lines_to_polygon",
