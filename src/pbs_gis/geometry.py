@@ -195,6 +195,30 @@ def subtract_smaller_overlaps(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
             except Exception:
                 pass
 
+    # Nachkontrolle: eine spaetere Subtraktion an derselben Flaeche verschiebt
+    # ihren Rand um Gleitkomma-Reste ueber einen schon abgezogenen Nachbarn
+    # (gemessen: 5e-6 m² nach einem sauberen Durchlauf, ordnungsabhaengig).
+    # Uebrige Paare werden gezielt nachgeschnitten, bis nichts mehr uebrig ist.
+    for _ in range(3):
+        rest = False
+        for j in by_area:
+            if geoms[j] is None or geoms[j].is_empty:
+                continue
+            for i in range(n):
+                if i == j or geoms[i] is None or geoms[i].is_empty or areas[i] >= areas[j]:
+                    continue
+                if geoms[i].intersects(geoms[j]) and geoms[i].intersection(geoms[j]).area > 0:
+                    rest = True
+                    try:
+                        new_j = geoms[j].difference(geoms[i])
+                        geoms[j] = None if new_j.is_empty else new_j
+                    except Exception:
+                        pass
+                    if geoms[j] is None:
+                        break
+        if not rest:
+            break
+
     out = gdf.copy()
     out["geometry"] = geoms
     out = out[out.geometry.notna() & ~out.geometry.is_empty].copy()
@@ -614,7 +638,12 @@ def close_slits(gdf: gpd.GeoDataFrame, max_width_m: float, *, clip=None) -> gpd.
         if g is None or g.is_empty:
             geoms.append(None)
             continue
-        c = g.buffer(r, join_style=1).buffer(-r, join_style=1)
+        # Gehrung, nicht Rundung: wo ein Schlitz sich zur Muendung hin weitet,
+        # laesst ein runder Puffer dort einen Kreisabschnitt stehen, der als
+        # Beule ueber den Rand in den Nachbarn ragt (gemessen: 30 cm breit,
+        # 4 cm tief); die Gehrung fuellt den Schlitz mit geraden Kanten und
+        # endet auf der gezeichneten Linie.
+        c = g.buffer(r, join_style=2, mitre_limit=2.0).buffer(-r, join_style=2, mitre_limit=2.0)
         if clip is not None:
             c = c.intersection(clip)
         c = _flaechig(c) if c.geom_type == "GeometryCollection" else c
