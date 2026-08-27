@@ -201,6 +201,97 @@ def subtract_smaller_overlaps(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     return out.reset_index(drop=True)
 
 
+def close_gaps(
+    gdf: gpd.GeoDataFrame,
+    area,
+    *,
+    max_width_m: float = 1.0,
+    tolerance_m: float = 0.001,
+) -> tuple[gpd.GeoDataFrame, dict]:
+    """
+    Close the cracks in a partition: each gap goes to its longest-bordering neighbour.
+
+    Surfaces traced from a drawing do not tile their area. Neighbouring boundaries
+    were drawn separately and miss each other by millimetres to decimetres, leaving
+    long hairline gaps that no area filter catches — a 0,1 m × 60 m crack is a
+    respectable 6 m². In a GIS such a map is broken: the surfaces no longer sum to
+    their area, and every overlay inherits the cracks.
+
+    A gap is given whole to ONE neighbour — the one it shares the longest border
+    with — rather than split down a middle line. Where a crack runs between two
+    surfaces, that border is the longer of the two sides, and the choice is
+    topology rather than interpretation. The area is conserved: what the gaps held
+    is added to real surfaces, never dropped.
+
+    *max_width_m* separates a crack from a real hole. Width is area over half the
+    perimeter, which is the mean width of a long thin shape — not its bounding box,
+    which a diagonal sliver would blow up. A gap wider than that is left open: it
+    is a place with no surface, and closing it would invent one.
+
+    The boundaries do not coincide — that is the whole premise — so a neighbour is
+    found within *tolerance_m* rather than by exact touching. At zero tolerance the
+    line-to-line intersection is empty and every crack looks orphaned.
+
+    Args:
+        gdf: Polygons of one partition; attributes are kept.
+        area: The region the partition is meant to fill (a Polygon).
+        max_width_m: Gaps wider than this stay open.
+        tolerance_m: How far a neighbour may sit from the gap.
+
+    Returns:
+        ``(GeoDataFrame, info)`` with ``geschlossen`` (count), ``geschlossen_m2``,
+        ``offen`` and ``offen_m2`` — an open remainder is a finding, not a failure.
+    """
+    from shapely.strtree import STRtree
+
+    geoms = list(gdf.geometry)
+    if not geoms:
+        return gdf.reset_index(drop=True), {
+            "geschlossen": 0, "geschlossen_m2": 0.0, "offen": 0, "offen_m2": 0.0}
+
+    rest = area.difference(unary_union(geoms))
+    stuecke = [p for p in getattr(rest, "geoms", [rest])
+               if not p.is_empty and p.length > 0]
+
+    schmal, offen = [], []
+    for p in stuecke:
+        (schmal if p.area / (p.length / 2) <= max_width_m else offen).append(p)
+
+    baum = STRtree(geoms)
+    zuwachs: dict[int, list] = {}
+    for p in schmal:
+        huelle = p.buffer(tolerance_m)
+        # A GeometryCollection has ``.boundary is None`` — and one arrives as soon
+        # as a caller hands in clipped surfaces, where a polygon and the line it
+        # touched the clip edge along end up in one geometry. A neighbour whose
+        # boundary cannot be taken is passed over, never a reason to end the run.
+        kandidaten = []
+        for i in baum.query(huelle):
+            rand = geoms[i].boundary
+            if rand is None:
+                continue
+            laenge = rand.intersection(huelle).length
+            if laenge > 0:
+                kandidaten.append((laenge, i))
+        if not kandidaten:
+            offen.append(p)
+            continue
+        zuwachs.setdefault(max(kandidaten)[1], []).append(p)
+
+    for i, stuecke_i in zuwachs.items():
+        geoms[i] = unary_union([geoms[i], *stuecke_i])
+
+    out = gdf.copy()
+    out["geometry"] = geoms
+    info = {
+        "geschlossen": sum(len(v) for v in zuwachs.values()),
+        "geschlossen_m2": sum(p.area for v in zuwachs.values() for p in v),
+        "offen": len(offen),
+        "offen_m2": sum(p.area for p in offen),
+    }
+    return out.reset_index(drop=True), info
+
+
 def to_single_part(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     """
     One row per polygon: split multi-part geometries, drop area-less fragments.
