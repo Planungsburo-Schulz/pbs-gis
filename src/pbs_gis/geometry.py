@@ -575,6 +575,55 @@ def close_gaps(
     return out.reset_index(drop=True), info
 
 
+def close_slits(gdf: gpd.GeoDataFrame, max_width_m: float, *, clip=None) -> gpd.GeoDataFrame:
+    """
+    Close the slits INSIDE each surface — morphological closing, one row at a time.
+
+    A surface traced from a drawing is cut by hairline slits where the drafter
+    hatched it in several strokes, and its fragments lie a few centimetres apart
+    where the strokes were meant to meet. Filling such a slit by a neighbour rule
+    is what produces notches and stair-stepped seams: the rule decides per gap
+    piece, and every change of decision leaves a corner. Closing does not
+    decide anything — each surface is dilated by half *max_width_m* and eroded
+    back, so a slit narrower than *max_width_m* vanishes into the surface it
+    cuts, and fragments closer than that grow together. Convex corners survive
+    closing unchanged; concave corners are rounded with that radius.
+
+    What it does NOT do: close the crack BETWEEN two different surfaces — both
+    grow into it and both retract again. Those cracks are :func:`close_gaps`'s
+    job, and it should follow this step, not precede it.
+
+    Where two closed surfaces now overlap (each grew into a slit the other also
+    borders) the caller resolves it; :func:`subtract_smaller_overlaps` keeps the
+    thin feature — a gutter, a kerb — that the larger surface would otherwise
+    grow over.
+
+    Args:
+        gdf: Polygons, one row per surface; attributes are kept.
+        max_width_m: Widest slit that closes; the buffer radius is half of it.
+        clip: Optional region to clip the closed surfaces back to — closing
+            grows a surface past an edge it lay against.
+
+    Returns:
+        GeoDataFrame with the closed geometries (rows that became empty are dropped).
+    """
+    r = max_width_m / 2
+    out = gdf.copy()
+    geoms = []
+    for g in out.geometry:
+        if g is None or g.is_empty:
+            geoms.append(None)
+            continue
+        c = g.buffer(r, join_style=1).buffer(-r, join_style=1)
+        if clip is not None:
+            c = c.intersection(clip)
+        c = _flaechig(c) if c.geom_type == "GeometryCollection" else c
+        geoms.append(repair_geometry(c))
+    out["geometry"] = geoms
+    out = out[out.geometry.notna() & ~out.geometry.is_empty].copy()
+    return out.reset_index(drop=True)
+
+
 def weld_fragments(
     gdf: gpd.GeoDataFrame,
     class_column: str,
