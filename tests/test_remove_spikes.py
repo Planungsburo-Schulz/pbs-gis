@@ -102,3 +102,23 @@ def test_echtes_loch_bleibt_erhalten():
 
     assert len(sauber.interiors) == 1
     assert sauber.area == pytest.approx(roh.area)
+
+
+def test_verschachteltes_ergebnis_bricht_nicht():
+    """Ein Teil eines MultiPolygons kann selbst als MultiPolygon zurueckkommen.
+
+    Die Reparatur eines nadelfreien Rings zerlegt ihn dort, wo er sich selbst
+    beruehrte. Unverschachtelt eingesammelt, sonst scheitert der Aufbau am
+    Ergebnis des eigenen Aufrufs ("Sequences of multi-polygons are not valid").
+    """
+    from shapely.geometry import MultiPolygon
+
+    sanduhr = Polygon([(0, 0), (10, 0), (10, 10), (5.0005, 5),
+                       (10, 20), (0, 20), (4.9995, 5)])
+    zweiter = Polygon([(30, 0), (40, 0), (40, 10), (30, 10)])
+    roh = MultiPolygon([sanduhr, zweiter])
+
+    sauber = remove_spikes_geom(roh)
+
+    assert sauber.geom_type in ("Polygon", "MultiPolygon")
+    assert sauber.area > 0

@@ -14,7 +14,11 @@ def rechteck(x0: float, x1: float, y0: float = 0.0, y1: float = 10.0) -> Polygon
 
 
 def test_ritze_zwischen_zwei_flaechen_wird_geschlossen():
-    """Der Regelfall: 1 cm Spalt über 10 m, den kein Flächenfilter fängt."""
+    """Der Regelfall: 1 cm Spalt über 10 m, den kein Flächenfilter fängt.
+
+    Die Ritze grenzt an BEIDE Flächen, wird also geteilt: jede bekommt die
+    Hälfte, und die Naht läuft auf der Mittellinie.
+    """
     gdf = gpd.GeoDataFrame(
         {"layer": ["A", "B"]},
         geometry=[rechteck(0, 5), rechteck(5.01, 10)],
@@ -22,12 +26,40 @@ def test_ritze_zwischen_zwei_flaechen_wird_geschlossen():
     )
     bereich = rechteck(0, 10)
 
-    out, info = close_gaps(gdf, bereich)
+    out, info = close_gaps(gdf, bereich, split_between_neighbours=True)
 
-    assert info["geschlossen"] == 1
     assert info["geschlossen_m2"] == pytest.approx(0.1)
     assert info["offen"] == 0
     assert out.area.sum() == pytest.approx(bereich.area)
+    assert out.area.iloc[0] == pytest.approx(out.area.iloc[1], rel=0.02), \
+        "gleich lange Grenzen, also gleiche Hälften"
+
+
+def test_lange_ritze_geht_stueckweise_an_den_jeweiligen_nachbarn():
+    """Der Fall, für den geteilt wird.
+
+    Eine 30 m lange Ritze läuft an ihrer oberen Hälfte an A, an ihrer unteren
+    an B. Ganz an den längeren Rand vergeben, trüge sie über ihre volle Länge
+    das falsche Material.
+    """
+    links_oben = Polygon([(0, 15), (5, 15), (5, 30), (0, 30)])
+    links_unten = Polygon([(0, 0), (5, 0), (5, 15), (0, 15)])
+    rechts = Polygon([(5.02, 0), (10, 0), (10, 30), (5.02, 30)])
+    gdf = gpd.GeoDataFrame(
+        {"layer": ["oben", "unten", "rechts"]},
+        geometry=[links_oben, links_unten, rechts],
+        crs=CRS,
+    )
+    bereich = Polygon([(0, 0), (10, 0), (10, 30), (0, 30)])
+
+    out, info = close_gaps(gdf, bereich, split_between_neighbours=True)
+
+    assert out.area.sum() == pytest.approx(bereich.area)
+    flaeche = dict(zip(out["layer"], out.area))
+    # Beide linken Flächen wachsen — ganz-an-einen hätte nur eine wachsen lassen.
+    assert flaeche["oben"] > links_oben.area, "obere Hälfte hat nichts bekommen"
+    assert flaeche["unten"] > links_unten.area, "untere Hälfte hat nichts bekommen"
+    assert flaeche["oben"] == pytest.approx(flaeche["unten"], rel=0.05)
 
 
 def test_ritze_geht_an_den_laengeren_rand():

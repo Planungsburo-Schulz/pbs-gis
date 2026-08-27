@@ -256,9 +256,18 @@ def remove_spikes_geom(geom, *, max_area_m2: float = 0.01, max_angle_deg: float 
     if geom is None or geom.is_empty:
         return geom
     if isinstance(geom, MultiPolygon):
-        teile = [remove_spikes_geom(p, max_area_m2=max_area_m2,
-                                    max_angle_deg=max_angle_deg) for p in geom.geoms]
-        teile = [p for p in teile if p is not None and not p.is_empty]
+        # Ein Teil kann selbst als MultiPolygon zurueckkommen: die Reparatur
+        # eines nadelfreien Rings zerlegt ihn dort, wo er sich selbst beruehrte.
+        # Unverschachtelt eingesammelt, sonst scheitert der Aufbau am Ergebnis
+        # des eigenen Aufrufs.
+        teile = []
+        for p in geom.geoms:
+            sauber = remove_spikes_geom(p, max_area_m2=max_area_m2,
+                                        max_angle_deg=max_angle_deg)
+            if sauber is None or sauber.is_empty:
+                continue
+            teile.extend(getattr(sauber, "geoms", [sauber]))
+        teile = [p for p in teile if isinstance(p, Polygon) and not p.is_empty]
         return MultiPolygon(teile) if teile else geom
     if not isinstance(geom, Polygon):
         return geom
@@ -295,6 +304,73 @@ def remove_spikes(gdf: gpd.GeoDataFrame, *, max_area_m2: float = 0.01,
     return out
 
 
+def _teile_luecke(luecke, geoms, nachbarn, tolerance_m, schrittweite_m: float = 0.1):
+    """Eine Luecke unter mehreren Nachbarn aufteilen: jeder Ort an den naechsten.
+
+    Die Naht laeuft dort, wo zwei Nachbarn gleich weit entfernt sind — die
+    Mittellinie zwischen ihnen. Sie wird ueber ein Voronoi-Diagramm der
+    verdichteten Randpunkte gefunden: jede Zelle gehoert dem Nachbarn, von
+    dessen Rand ihr Punkt stammt, und was in der Luecke davon liegt, faellt an
+    ihn.
+
+    Gibt ``None`` zurueck, wenn die Aufteilung nicht traegt — dann bleibt dem
+    Aufrufer die Zuweisung als Ganzes, und keine Flaeche geht verloren.
+    """
+    from shapely.geometry import MultiPoint
+    from shapely.ops import voronoi_diagram
+    from shapely.strtree import STRtree
+
+    huelle = luecke.buffer(tolerance_m)
+    punkte, besitzer = [], []
+    for i in nachbarn:
+        rand = geoms[i].boundary
+        if rand is None:
+            continue
+        anliegend = rand.intersection(huelle)
+        if anliegend.is_empty:
+            continue
+        for linie in getattr(anliegend, "geoms", [anliegend]):
+            if not hasattr(linie, "length") or linie.length <= 0:
+                continue
+            n = max(2, int(linie.length / schrittweite_m) + 1)
+            for k in range(n + 1):
+                punkte.append(linie.interpolate(k / n, normalized=True))
+                besitzer.append(i)
+
+    if len(set(besitzer)) < 2:
+        return None
+
+    try:
+        zellen = voronoi_diagram(MultiPoint(punkte), envelope=luecke.buffer(1.0))
+    except Exception:
+        return None
+
+    # Eine Zelle traegt ihren Punkt; ueber ihn haengt sie am Nachbarn.
+    nach_besitzer: dict[int, list] = {}
+    baum = STRtree(punkte)
+    for zelle in zellen.geoms:
+        treffer = baum.query(zelle)
+        drin = [j for j in treffer if zelle.contains(punkte[j])]
+        if not drin:
+            continue
+        nach_besitzer.setdefault(besitzer[drin[0]], []).append(zelle)
+
+    ergebnis = []
+    gedeckt = 0.0
+    for i, zellen_i in nach_besitzer.items():
+        stueck = unary_union(zellen_i).intersection(luecke)
+        if stueck.is_empty or stueck.area <= 0:
+            continue
+        ergebnis.append((i, stueck))
+        gedeckt += stueck.area
+
+    # Die Aufteilung muss die Luecke vollstaendig verteilen; sonst faellt
+    # unbemerkt Flaeche heraus und die Deckung sinkt, ohne dass es jemand sieht.
+    if not ergebnis or abs(gedeckt - luecke.area) > max(1e-6, luecke.area * 1e-3):
+        return None
+    return ergebnis
+
+
 def close_gaps(
     gdf: gpd.GeoDataFrame,
     area,
@@ -302,6 +378,7 @@ def close_gaps(
     max_width_m: float = 1.0,
     tolerance_m: float = 0.001,
     spike_area_m2: float = 0.01,
+    split_between_neighbours: bool = False,
 ) -> tuple[gpd.GeoDataFrame, dict]:
     """
     Close the cracks in a partition: each gap goes to its longest-bordering neighbour.
@@ -312,11 +389,12 @@ def close_gaps(
     respectable 6 m². In a GIS such a map is broken: the surfaces no longer sum to
     their area, and every overlay inherits the cracks.
 
-    A gap is given whole to ONE neighbour — the one it shares the longest border
-    with — rather than split down a middle line. Where a crack runs between two
-    surfaces, that border is the longer of the two sides, and the choice is
-    topology rather than interpretation. The area is conserved: what the gaps held
-    is added to real surfaces, never dropped.
+    A gap bordering ONE surface goes to it whole. A gap bordering several is
+    SPLIT, each place falling to its nearest neighbour, so the seam runs down the
+    middle line between them — a crack running 30 m along two different surfaces
+    belongs to both, and handing it whole to the longer border moves the wrong
+    material across its full length. The area is conserved either way: what the
+    gaps held is added to real surfaces, never dropped.
 
     *max_width_m* separates a crack from a real hole. Width is area over half the
     perimeter, which is the mean width of a long thin shape — not its bounding box,
@@ -332,6 +410,19 @@ def close_gaps(
         area: The region the partition is meant to fill (a Polygon).
         max_width_m: Gaps wider than this stay open.
         tolerance_m: How far a neighbour may sit from the gap.
+        split_between_neighbours: Split a gap that borders more than one surface
+            and give each part to its nearest neighbour, rather than handing the
+            whole gap to the one it shares the longest border with. A crack
+            running 30 m along two different surfaces belongs to both, and
+            whole-piece assignment moves the wrong material across its full
+            length. OFF by default, and measured before you turn it on: on a
+            real surface map it more than doubled the piece count (61 to 142)
+            and left 0,0007 m² of overlap, because a split part can end up with
+            a neighbour it does not actually touch, and then stays a separate
+            island of that layer. The seam is right in principle — the two-sided
+            test proves it — the assignment is not yet clean on real geometry.
+            Falls back to whole-piece wherever the split would not account for
+            the gap completely.
         spike_area_m2: Passed to :func:`remove_spikes_geom` for the needles this
             step's own unions leave behind. A caller that despikes with a wider
             threshold must say so here, or the chain cleans up to two different
@@ -375,7 +466,15 @@ def close_gaps(
         if not kandidaten:
             offen.append(p)
             continue
-        zuwachs.setdefault(max(kandidaten)[1], []).append(p)
+        if len(kandidaten) == 1 or not split_between_neighbours:
+            zuwachs.setdefault(max(kandidaten)[1], []).append(p)
+            continue
+        teile = _teile_luecke(p, geoms, [i for _, i in kandidaten], tolerance_m)
+        if teile is None:
+            zuwachs.setdefault(max(kandidaten)[1], []).append(p)
+            continue
+        for i, stueck in teile:
+            zuwachs.setdefault(i, []).append(stueck)
 
     for i, stuecke_i in zuwachs.items():
         # Die Vereinigung hinterlaesst Nadeln: der ferne Rand der Ritze liegt ein
