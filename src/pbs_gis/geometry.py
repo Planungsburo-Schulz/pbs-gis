@@ -201,12 +201,107 @@ def subtract_smaller_overlaps(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     return out.reset_index(drop=True)
 
 
+def _entnadeln_ring(koordinaten, max_area_m2, max_angle_deg):
+    """Nadelspitzen aus einem Ring entfernen, bis keine mehr uebrig ist."""
+    import math
+
+    punkte = list(koordinaten[:-1])
+    geaendert = True
+    while geaendert and len(punkte) > 3:
+        geaendert = False
+        for i in range(len(punkte)):
+            a, b, c = punkte[i - 1], punkte[i], punkte[(i + 1) % len(punkte)]
+            v1 = (a[0] - b[0], a[1] - b[1])
+            v2 = (c[0] - b[0], c[1] - b[1])
+            n1 = math.hypot(*v1)
+            n2 = math.hypot(*v2)
+            if n1 == 0 or n2 == 0:
+                punkte.pop(i)
+                geaendert = True
+                break
+            cos = max(-1.0, min(1.0, (v1[0] * v2[0] + v1[1] * v2[1]) / (n1 * n2)))
+            winkel = math.degrees(math.acos(cos))
+            dreieck = abs(v1[0] * v2[1] - v2[0] * v1[1]) / 2
+            if winkel <= max_angle_deg and dreieck <= max_area_m2:
+                punkte.pop(i)
+                geaendert = True
+                break
+        if len(punkte) < 3:
+            return None
+    return punkte + [punkte[0]] if len(punkte) >= 3 else None
+
+
+def remove_spikes_geom(geom, *, max_area_m2: float = 0.01, max_angle_deg: float = 5.0):
+    """
+    Drop needle vertices: a spike that runs out and back, enclosing no area.
+
+    A set operation between boundaries that nearly — but not exactly — coincide
+    leaves these behind. They carry no area, so no quantity notices them, but the
+    map does: a needle reaching deep into a polygon is drawn as a line across its
+    fill, and reads as a dividing line in a surface that has none. Measured on one
+    real surface: four needles with legs of 1,2 to 2,6 m enclosing 0,0007 m².
+
+    Both conditions must hold, and the area one is what makes this safe: a genuine
+    sharp corner of a plan encloses real area and is kept however acute it is.
+
+    Args:
+        geom: Polygon or MultiPolygon.
+        max_area_m2: Largest area a removable spike may enclose.
+        max_angle_deg: Largest angle at the tip of a removable spike.
+
+    Returns:
+        The geometry without its needles; area is preserved to within
+        *max_area_m2* per spike.
+    """
+    if geom is None or geom.is_empty:
+        return geom
+    if isinstance(geom, MultiPolygon):
+        teile = [remove_spikes_geom(p, max_area_m2=max_area_m2,
+                                    max_angle_deg=max_angle_deg) for p in geom.geoms]
+        teile = [p for p in teile if p is not None and not p.is_empty]
+        return MultiPolygon(teile) if teile else geom
+    if not isinstance(geom, Polygon):
+        return geom
+
+    aussen = _entnadeln_ring(list(geom.exterior.coords), max_area_m2, max_angle_deg)
+    if aussen is None:
+        return geom
+    innen = []
+    for ring in geom.interiors:
+        # An inner ring with no area is not a hole, it is a line inside the
+        # surface — it draws across the fill and makes an undivided surface look
+        # divided. Such rings come from the same source as the needles, and are
+        # dropped whole; losing them is area-neutral by definition. The needle
+        # loop cannot reach them: a three-point ring is already at its floor.
+        if Polygon(ring).area <= max_area_m2:
+            continue
+        r = _entnadeln_ring(list(ring.coords), max_area_m2, max_angle_deg)
+        if r is not None:
+            innen.append(r)
+    sauber = Polygon(aussen, innen)
+    if not sauber.is_valid:
+        sauber = repair_geometry(sauber)
+    return sauber if sauber is not None and not sauber.is_empty else geom
+
+
+def remove_spikes(gdf: gpd.GeoDataFrame, *, max_area_m2: float = 0.01,
+                  max_angle_deg: float = 5.0) -> gpd.GeoDataFrame:
+    """Apply :func:`remove_spikes_geom` to every row; attributes are kept."""
+    out = gdf.copy()
+    out["geometry"] = [
+        remove_spikes_geom(g, max_area_m2=max_area_m2, max_angle_deg=max_angle_deg)
+        for g in out.geometry
+    ]
+    return out
+
+
 def close_gaps(
     gdf: gpd.GeoDataFrame,
     area,
     *,
     max_width_m: float = 1.0,
     tolerance_m: float = 0.001,
+    spike_area_m2: float = 0.01,
 ) -> tuple[gpd.GeoDataFrame, dict]:
     """
     Close the cracks in a partition: each gap goes to its longest-bordering neighbour.
@@ -237,6 +332,10 @@ def close_gaps(
         area: The region the partition is meant to fill (a Polygon).
         max_width_m: Gaps wider than this stay open.
         tolerance_m: How far a neighbour may sit from the gap.
+        spike_area_m2: Passed to :func:`remove_spikes_geom` for the needles this
+            step's own unions leave behind. A caller that despikes with a wider
+            threshold must say so here, or the chain cleans up to two different
+            standards and needles between them survive every pass.
 
     Returns:
         ``(GeoDataFrame, info)`` with ``geschlossen`` (count), ``geschlossen_m2``,
@@ -279,7 +378,13 @@ def close_gaps(
         zuwachs.setdefault(max(kandidaten)[1], []).append(p)
 
     for i, stuecke_i in zuwachs.items():
-        geoms[i] = unary_union([geoms[i], *stuecke_i])
+        # Die Vereinigung hinterlaesst Nadeln: der ferne Rand der Ritze liegt ein
+        # Haar neben dem Rand des Nachbarn, und wo beide zusammenlaufen, bleibt
+        # eine Spitze ohne Breite stehen. Gemessen an einer realen Bestandskarte
+        # entstanden so 52 Spikes aus 6 — sie sind Erzeugnis dieses Schritts und
+        # werden hier beseitigt, nicht dem Aufrufer ueberlassen.
+        geoms[i] = remove_spikes_geom(unary_union([geoms[i], *stuecke_i]),
+                                      max_area_m2=spike_area_m2)
 
     out = gdf.copy()
     out["geometry"] = geoms

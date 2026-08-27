@@ -208,6 +208,7 @@ All common functions importable from top level: `from pbs_gis import ...`
 - `subtract_smaller_overlaps()` — remove overlaps by area
 - `to_single_part()` — one row per polygon, area-less fragments dropped
 - `close_gaps()` — close cracks in a partition, each to its longest-bordering neighbour
+- `remove_spikes()` / `remove_spikes_geom()` — drop zero-area needles and degenerate holes
 - `morphological_filter()` — buffer-dissolve-buffer polygon cleanup
 - `distance_to_nearest()` — min distance to reference features
 - `points_with_buffers()` — create points + buffer union from coordinate data
