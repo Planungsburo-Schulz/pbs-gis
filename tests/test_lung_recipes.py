@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import geopandas as gpd
 import pytest
+from pyproj import CRS
 from shapely.geometry import Point
 
 from pbs_gis.recipes import load_and_run_hook, load_recipe
@@ -70,6 +71,18 @@ def test_lung_schutzgebiete_layer_set():
 def test_lung_wasserschutz_layer_set():
     recipe = load_recipe("mv_lung_wasserschutz")
     assert sorted(recipe.layer_aliases()) == ["ksg", "uesg", "wsg"]
+
+
+@pytest.mark.parametrize("name", LUNG_RECIPES)
+def test_lung_ausgabe_crs_is_what_the_hook_delivers(name):
+    # ausgabe_crs ist die Projektion, in der ein von Hand übergebener extent
+    # standardmäßig gilt — sie muss die sein, die der Hook tatsächlich liefert.
+    recipe = load_recipe(name)
+    delivered = load_and_run_hook(recipe.hooks, "post_process", _fixture_gdf()).crs
+    assert recipe.ausgabe_crs == "EPSG:25833"
+    assert delivered == CRS.from_user_input(recipe.ausgabe_crs)
+    for alias in recipe.layer_aliases():
+        assert recipe.get_layer_recipe(alias).ausgabe_crs == recipe.ausgabe_crs
 
 
 @pytest.mark.parametrize("name", LUNG_RECIPES)

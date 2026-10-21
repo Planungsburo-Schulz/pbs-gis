@@ -36,6 +36,10 @@ class Recipe:
     entity).  See pbs_gis.atkis.fetch_classified_features for the schema.
     Set on a layer config (per layer) and merged into the per-layer recipe
     by ``get_layer_recipe``.  Activated when ``filter:`` is also given."""
+    ausgabe_crs: str | None = None
+    """CRS the recipe delivers after its hooks (``"EPSG:<n>"``), where that
+    differs from ``connection.crs``. A hand-given ``extent`` is read in it by
+    default and transformed into the request CRS (``wfs.download``)."""
     _source_path: Path | None = field(default=None, repr=False)
 
     @property
@@ -79,6 +83,7 @@ class Recipe:
             classification_via=layer_cfg.get(
                 "classification_via", self.classification_via
             ),
+            ausgabe_crs=self.ausgabe_crs,
             _source_path=self._source_path,
         )
 
@@ -125,6 +130,7 @@ def _parse_recipe(data: dict, source_path: Path | None = None) -> Recipe:
         exclude_tags=data.get("exclude_tags", {}),
         layers=data.get("layers", {}),
         classification_via=data.get("classification_via", {}),
+        ausgabe_crs=data.get("ausgabe_crs"),
         _source_path=source_path,
     )
 

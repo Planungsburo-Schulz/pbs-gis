@@ -10,6 +10,7 @@ connection:
   bbox_kvp: false
 
 hooks: lung_demojibake.py
+ausgabe_crs: "EPSG:25833"
 
 layers:
   wsg:

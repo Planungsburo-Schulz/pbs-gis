@@ -14,6 +14,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import geopandas as gpd
+from pyproj import CRS, Transformer
 
 CACHE_DIR_NAME = "download_cache"
 
@@ -135,6 +136,7 @@ def download(
     layer: str,
     *,
     extent: tuple[float, float, float, float] | None = None,
+    extent_crs: str | None = None,
     input_boundary: Path | str | None = None,
     output_path: Path | str | None = None,
     crs: str | None = None,
@@ -153,7 +155,10 @@ def download(
     Args:
         url: WFS service URL.
         layer: Feature type name (e.g. 'adv:AX_Gebaeude').
-        extent: (minx, miny, maxx, maxy) bounding box filter in crs.
+        extent: (minx, miny, maxx, maxy) bounding box filter in extent_crs.
+        extent_crs: CRS of ``extent``. Default: the recipe's ``ausgabe_crs``
+            if set, else ``crs``. An extent in another CRS than ``crs`` is
+            transformed into ``crs`` before any request is sent.
         input_boundary: Shapefile/GeoPackage to derive extent from.
         output_path: Output file path (.gpkg or .shp). If None, no file written.
         crs: CRS for the request and output.
@@ -187,6 +192,16 @@ def download(
 
     if not crs:
         raise ValueError("crs is required (e.g. 'EPSG:25833'). No silent defaults — wrong CRS causes silent data corruption.")
+
+    # A bbox in another CRS than the request's is not an error at the service:
+    # it matches nothing and answers zero features. So a hand-given extent is
+    # transformed here, before any of the request paths below sends it.
+    if extent is not None:
+        if extent_crs is None:
+            extent_crs = (_recipe.ausgabe_crs if _recipe else None) or crs
+        if CRS.from_user_input(extent_crs) != CRS.from_user_input(crs):
+            extent = tuple(Transformer.from_crs(extent_crs, crs, always_xy=True)
+                           .transform_bounds(*extent))
 
     # Resolve extent from input_boundary
     if extent is None and input_boundary is not None:
