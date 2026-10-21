@@ -7,6 +7,8 @@ See ``src/pbs_gis/cad/styles.py`` and ``colors.py``.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from pbs_gis.cad.colors import ColorError, normalize_transparency, resolve_color
@@ -18,7 +20,7 @@ from pbs_gis.cad.styles import (
     parse_styles,
 )
 
-FIXTURE = "tests/fixtures/cad_styles_georgendorf.yaml"
+FIXTURE = Path(__file__).parent / "fixtures" / "cad_styles_georgendorf.yaml"
 
 
 # --- colours ---------------------------------------------------------------

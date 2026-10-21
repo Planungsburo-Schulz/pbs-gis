@@ -7,6 +7,8 @@ re-read via ezdxf, and assert layers/entity counts/colours.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import ezdxf
 import geopandas as gpd
 import pytest
@@ -15,7 +17,7 @@ from shapely.geometry import LineString, Point, Polygon
 from pbs_gis.cad import ExportError, LayerSpec, export_layers, load_styles
 
 CRS = "EPSG:25833"
-FIXTURE = "tests/fixtures/cad_styles_georgendorf.yaml"
+FIXTURE = Path(__file__).parent / "fixtures" / "cad_styles_georgendorf.yaml"
 
 
 def _gpkg(tmp_path, name, geom, crs=CRS, extra=None):

@@ -19,7 +19,7 @@ from pbs_gis.manifest import sha256_file
 from pbs_gis.templates import get_template
 
 CRS = "EPSG:25833"
-STYLES_FIXTURE = "tests/fixtures/cad_styles_georgendorf.yaml"
+STYLES_FIXTURE = Path(__file__).parent / "fixtures" / "cad_styles_georgendorf.yaml"
 
 
 def _square(x0=0, y0=0, s=10):
