@@ -3,13 +3,19 @@
 Erzeugt in einem Lauf die Anlagen einer Direktanfrage an Leitungsträger:
 Übersichtskarte A4 quer als PDF und PNG, Umringgeometrie als DXF und
 GeoPackage, dazu ein LIESMICH mit dem sha256 der Quelle. Quelle, Ausgabe,
-Stand, Beschriftung, Kartendienst, Maßstab und Auflösung kommen aus
-Parametern; das Blatt ist A4 quer. Der Quellenvermerk stammt wörtlich aus
+Stand, Beschriftung, Projektion, Kartendienst, Maßstab und Auflösung kommen
+aus Parametern; das Blatt ist A4 quer. Der Quellenvermerk stammt wörtlich aus
 dem <Fees>-Element der WMS-Capabilities — er ist Lizenzbedingung
 (CC BY 4.0), nicht Dekoration.
 
+Die Projektion hat keinen Standard: eine falsche verschiebt den Umring um
+Hunderte Meter, und Karte wie DXF sähen trotzdem richtig aus. Die Quelle muss
+in der übergebenen Projektion vorliegen, genau eine Ebene (oder die mit
+``--ebene`` benannte) und darin genau ein Feature tragen — sonst bricht der
+Lauf ab, bevor eine Datei entsteht.
+
     python -m pbs_gis.uebersichtskarte --quelle <gpkg> --ausgabe <dir> \\
-        --titel <text> --untertitel <text> [--stand JJJJ-MM-TT] ...
+        --titel <text> --untertitel <text> --epsg <code> [--stand JJJJ-MM-TT] ...
     python -m pbs_gis.uebersichtskarte --test
 """
 from __future__ import annotations
@@ -17,6 +23,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import hashlib
+import importlib.metadata
 import io
 import json
 import re
@@ -27,21 +34,58 @@ from pathlib import Path
 
 import requests
 from PIL import Image, ImageDraw, ImageFont
+from pyproj import CRS
 
 WMS = "https://sgx.geodatenzentrum.de/wms_basemapde"
 LAYER = "de_basemapde_web_raster_farbe"
 QUELLE = "© GeoBasis-DE / BKG (2026) CC BY 4.0"
-EPSG = 25833
 MASSSTAB = 5000
 DPI = 200
 
 
-def geometrie(quelle):
+def quell_ebene(quelle, epsg, ebene=None):
+    """Name der Quell-Ebene, nachdem Ebenenwahl, Feature-Zahl und Projektion
+    gegen die Quelle selbst geprüft sind; jede Abweichung beendet den Lauf."""
+    info = json.loads(subprocess.run(
+        ["ogrinfo", "-json", "-so", str(quelle)],
+        capture_output=True, text=True, check=True).stdout)
+    ebenen = {e["name"]: e for e in info.get("layers", [])}
+    if ebene is None:
+        if len(ebenen) != 1:
+            sys.exit(f"{quelle}: {len(ebenen)} Ebenen ({', '.join(ebenen) or 'keine'}) "
+                     f"— mit --ebene <name> eine wählen")
+        ebene = next(iter(ebenen))
+    elif ebene not in ebenen:
+        sys.exit(f"{quelle}: keine Ebene {ebene!r} (vorhanden: {', '.join(ebenen)})")
+    e = ebenen[ebene]
+    if e.get("featureCount") != 1:
+        sys.exit(f"{quelle}, Ebene {ebene!r}: {e.get('featureCount')} Features — "
+                 f"die Übersichtskarte verlangt genau einen Geltungsbereich")
+    felder = e.get("geometryFields") or []
+    wkt = (felder[0].get("coordinateSystem") or {}).get("wkt") if felder else None
+    if not wkt:
+        sys.exit(f"{quelle}, Ebene {ebene!r}: keine Projektion angegeben, --epsg {epsg} "
+                 f"lässt sich nicht bestätigen")
+    quell_crs = CRS.from_wkt(wkt)
+    if quell_crs != CRS.from_epsg(epsg):
+        sys.exit(f"{quelle}, Ebene {ebene!r}: Quelle liegt in EPSG:{quell_crs.to_epsg()} "
+                 f"({quell_crs.name}), übergeben ist --epsg {epsg}")
+    return ebene
+
+
+def geometrie(quelle, ebene):
     gj = json.loads(subprocess.run(
-        ["ogr2ogr", "-f", "GeoJSON", "/vsistdout/", str(quelle)],
+        ["ogr2ogr", "-f", "GeoJSON", "/vsistdout/", str(quelle), ebene],
         capture_output=True, text=True, check=True).stdout)
     g = gj["features"][0]["geometry"]
     return g["coordinates"] if g["type"] == "MultiPolygon" else [g["coordinates"]]
+
+
+def werkzeug_version():
+    try:
+        return f"pbs-gis {importlib.metadata.version('pbs-gis')}"
+    except importlib.metadata.PackageNotFoundError:
+        return "pbs-gis-Version unbekannt (keine Paket-Metadaten)"
 
 
 def flaeche(ring):
@@ -73,8 +117,8 @@ def wms_karte(wms, layer, epsg, bbox, groesse):
     return Image.open(io.BytesIO(r.content)).convert("RGBA")
 
 
-def erzeuge(quelle, ausgabe, titel, untertitel, *, stand, wms=WMS, layer=LAYER,
-            quellenvermerk=QUELLE, epsg=EPSG, massstab=MASSSTAB, dpi=DPI,
+def erzeuge(quelle, ausgabe, titel, untertitel, *, stand, epsg, ebene=None, wms=WMS,
+            layer=LAYER, quellenvermerk=QUELLE, massstab=MASSSTAB, dpi=DPI,
             hole_karte=wms_karte):
     """Schreibt die fünf Anlagen nach `ausgabe` und gibt ihre Pfade zurück
     (PDF, PNG, DXF, GPKG, LIESMICH)."""
@@ -85,7 +129,9 @@ def erzeuge(quelle, ausgabe, titel, untertitel, *, stand, wms=WMS, layer=LAYER,
     frame = (int(240 * mm), int(140 * mm))             # Kartenfeld
     frame_xy = (int(28.5 * mm), int(30 * mm))
 
-    parts = geometrie(src)
+    ebene = quell_ebene(src, epsg, ebene)
+    crs_name = CRS.from_epsg(epsg).name
+    parts = geometrie(src, ebene)
     xs = [p[0] for poly in parts for p in poly[0]]
     ys = [p[1] for poly in parts for p in poly[0]]
     cx, cy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
@@ -144,7 +190,7 @@ def erzeuge(quelle, ausgabe, titel, untertitel, *, stand, wms=WMS, layer=LAYER,
 
     ges = sum(flaeche(p[0]) for p in parts)
     zeilen = [
-        f"Koordinatenreferenzsystem: ETRS89 / UTM Zone 33N (EPSG:{epsg})",
+        f"Koordinatenreferenzsystem: {crs_name} (EPSG:{epsg})",
         f"Eckpunkte des umschließenden Rechtecks:  SW {min(xs):.0f} / {min(ys):.0f}"
         f"   ·   NO {max(xs):.0f} / {max(ys):.0f}",
         f"Ausdehnung {max(xs)-min(xs):.0f} x {max(ys)-min(ys):.0f} m   ·   "
@@ -168,12 +214,12 @@ def erzeuge(quelle, ausgabe, titel, untertitel, *, stand, wms=WMS, layer=LAYER,
     # Der DXF-Treiber kennt nur das Feld "Layer"; jeder andere Spaltenname
     # bricht die Übersetzung ab. Der SELECT setzt zugleich einen sprechenden
     # CAD-Layernamen, statt alles auf "0" abzulegen.
-    dxf = out / f"{stand}_Geltungsbereich_EPSG25833.dxf"
+    dxf = out / f"{stand}_Geltungsbereich_EPSG{epsg}.dxf"
     subprocess.run(["ogr2ogr", "-f", "DXF", str(dxf), str(src),
-                    "-sql", "SELECT geom, 'GELTUNGSBEREICH' AS Layer FROM geltungsbereich"],
+                    "-sql", f"SELECT geom, 'GELTUNGSBEREICH' AS Layer FROM \"{ebene}\""],
                    check=True)
-    gpkg = out / f"{stand}_Geltungsbereich_EPSG25833.gpkg"
-    subprocess.run(["ogr2ogr", "-f", "GPKG", str(gpkg), str(src)], check=True)
+    gpkg = out / f"{stand}_Geltungsbereich_EPSG{epsg}.gpkg"
+    subprocess.run(["ogr2ogr", "-f", "GPKG", str(gpkg), str(src), ebene], check=True)
 
     src_sha = hashlib.sha256(src.read_bytes()).hexdigest()
     man = out / f"{stand}_Geltungsbereich_LIESMICH.md"
@@ -183,7 +229,7 @@ def erzeuge(quelle, ausgabe, titel, untertitel, *, stand, wms=WMS, layer=LAYER,
         f"- Quelle: `{quelle}`\n"
         f"- sha256 der Quelle: `{src_sha}`\n"
         f"- CRS: ETRS89 / UTM 33N (EPSG:{epsg})\n"
-        f"- Erzeugt mit: `intern/abgeleitet/uebersichtskarte.py` (Kopie des Skripts)\n\n"
+        f"- Erzeugt mit: `python -m pbs_gis.uebersichtskarte` ({werkzeug_version()})\n\n"
         "| Datei | Zweck |\n|---|---|\n"
         f"| `{pdf.name}` | Übersichtskarte A4 quer, M 1:{massstab} |\n"
         f"| `{png.name}` | dieselbe Karte als Bild |\n"
@@ -216,16 +262,17 @@ def selbstprobe():
     def leeres_raster(wms, layer, epsg, bbox, groesse):
         return Image.new("RGBA", groesse, (255, 255, 255, 255))
 
+    epsg = 25833
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         quelle = tmp / "geltungsbereich.gpkg"
         x0, y0, s = 400000, 5900000, 300
         gpd.GeoDataFrame(
             {"geometry": [Polygon([(x0, y0), (x0 + s, y0), (x0 + s, y0 + s), (x0, y0 + s)])]},
-            crs=f"EPSG:{EPSG}",
+            crs=f"EPSG:{epsg}",
         ).to_file(quelle, layer="geltungsbereich", driver="GPKG")
         pfade = erzeuge(quelle, tmp / "abgeleitet", "Selbstprobe", "synthetisches Quadrat",
-                        stand="2000-01-01", hole_karte=leeres_raster)
+                        stand="2000-01-01", epsg=epsg, hole_karte=leeres_raster)
         fehlend = [p.name for p in pfade if not p.is_file()]
         n_dxf = feature_count(pfade[2])
     ok = not fehlend and n_dxf > 0
@@ -247,23 +294,26 @@ def main(argv=None):
     ap.add_argument("--untertitel", help="Untertitel (Pflicht)")
     ap.add_argument("--stand", default=datetime.date.today().isoformat(),
                     help="Datum für Dateinamen und Vermerke (Standard: heute)")
+    ap.add_argument("--epsg", type=int,
+                    help="Projektion der Quelle und der Anlagen, z. B. 25833 (Pflicht; "
+                         "weicht die Quelle ab, bricht der Lauf ab)")
+    ap.add_argument("--ebene", help="Quell-Ebene, wenn das GeoPackage mehrere trägt")
     ap.add_argument("--wms", default=WMS)
     ap.add_argument("--layer", default=LAYER)
     ap.add_argument("--quellenvermerk", default=QUELLE)
-    ap.add_argument("--epsg", type=int, default=EPSG)
     ap.add_argument("--massstab", type=int, default=MASSSTAB)
     ap.add_argument("--dpi", type=int, default=DPI)
     args = ap.parse_args(argv)
 
     if args.test:
         return 0 if selbstprobe() else 1
-    fehlend = [f"--{n}" for n in ("quelle", "ausgabe", "titel", "untertitel")
+    fehlend = [f"--{n}" for n in ("quelle", "ausgabe", "titel", "untertitel", "epsg")
                if getattr(args, n) is None]
     if fehlend:
         ap.error(f"Pflicht-Argumente fehlen: {', '.join(fehlend)}")
     erzeuge(args.quelle, args.ausgabe, args.titel, args.untertitel, stand=args.stand,
-            wms=args.wms, layer=args.layer, quellenvermerk=args.quellenvermerk,
-            epsg=args.epsg, massstab=args.massstab, dpi=args.dpi)
+            epsg=args.epsg, ebene=args.ebene, wms=args.wms, layer=args.layer,
+            quellenvermerk=args.quellenvermerk, massstab=args.massstab, dpi=args.dpi)
     return 0
 
 
