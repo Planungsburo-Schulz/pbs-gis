@@ -1,103 +1,124 @@
-"""GIS utilities: DXF tools, geometry operations, reporting, OSM, WMS vectorization."""
+"""GIS utilities: DXF tools, geometry operations, reporting, OSM, WMS vectorization.
 
-from pbs_gis.md_table import markdown_table
-from pbs_gis.dxf.convert import shapefile_to_dxf
-from pbs_gis.dxf.document import new_dxf_document, ensure_layer
-from pbs_gis.dxf.blockflaechen import block_circles
-from pbs_gis.dxf.hatch import extract_hatch_areas
-from pbs_gis.luftbild import vegetationsflaechen
-from pbs_gis.dxf.subset import dxf_subset, dxf_subset_from_sources
-from pbs_gis.dxf.extract import (
-    extract_3dsolids,
-    extract_dxf_circles,
-    extract_dxf_layers,
-    interpolate_bulge_arc,
-    lwpolyline_to_coords,
-    save_layers_as_shapefiles,
-    solid3d_to_circle,
-    _solid3d_center_2d,
-    _solid3d_to_2d_polygon,
-    _solid3d_to_world_points,
-)
-from pbs_gis.dxf.map_od import (
-    OD_EXTENSION_DICT_KEY,
-    attach_od_to_entity,
-    encode_od_1004,
-    get_table_handle_by_name,
-)
-from pbs_gis.cad import (
-    LayerSpec,
-    Style,
-    export_layers,
-    load_styles,
-)
-from pbs_gis.geometry import (
-    smooth_polygons,
-    smooth_partition,
-    partition_along,
-    absorb_small,
-    buffer_ring_zones,
-    classify_direction,
-    distance_to_nearest,
-    extend_line,
-    filter_lines_by_direction,
-    find_column,
-    lines_to_polygon,
-    load_and_union,
-    make_valid_gdf,
-    morphological_filter,
-    points_with_buffers,
-    repair_geometry,
-    remove_inner_rings,
-    snap_endpoints,
-    strip_utm_zone_prefix,
-    close_gaps,
-    close_slits,
-    transfer_spikes,
-    weld_fragments,
-    remove_spikes,
-    remove_spikes_geom,
-    subtract_geometries,
-    subtract_smaller_overlaps,
-    to_single_part,
-)
-from pbs_gis.reporting import (
-    area_by_category,
-    area_report,
-    conflict_matrix,
-    intersection_areas,
-)
-from pbs_gis.alkis import find_flurstuecke
-from pbs_gis.georef import register_features, SimilarityTransform
-from pbs_gis.einpassung import (
-    EinpassungError,
-    apply_points,
-    chain_over_overview,
-    chamfer_field,
-    coarse_fit,
-    compose,
-    icp_helmert,
-    isolation,
-    overview_vertices,
-    reference_rings,
-    resample,
-    sample_rings,
-    sheet_mosaic,
-    sheet_vectors,
-    vertices,
-)
-from pbs_gis.atkis import fetch_classified_features, fetch_classified_guide
-from pbs_gis.catalog import catalog
-from pbs_gis.maps import quick_map
-from pbs_gis.recipes import (
-    Recipe,
-    apply_attribute_mappings,
-    check_recipe_layers,
-    list_recipes,
-    load_recipe,
-    run_multi_layer_recipe,
-    run_recipe,
-)
+Importing the package loads nothing; an attribute access imports the one
+submodule that defines it. A missing optional dependency (ezdxf for the
+DXF/CAD family) therefore only fails the callers that use it.
+"""
+
+import importlib
+
+# public name -> defining submodule
+_EXPORTS = {
+    "markdown_table": "pbs_gis.md_table",
+    "shapefile_to_dxf": "pbs_gis.dxf.convert",
+    "new_dxf_document": "pbs_gis.dxf.document",
+    "ensure_layer": "pbs_gis.dxf.document",
+    "block_circles": "pbs_gis.dxf.blockflaechen",
+    "extract_hatch_areas": "pbs_gis.dxf.hatch",
+    "vegetationsflaechen": "pbs_gis.luftbild",
+    "dxf_subset": "pbs_gis.dxf.subset",
+    "dxf_subset_from_sources": "pbs_gis.dxf.subset",
+    "extract_3dsolids": "pbs_gis.dxf.extract",
+    "extract_dxf_circles": "pbs_gis.dxf.extract",
+    "extract_dxf_layers": "pbs_gis.dxf.extract",
+    "interpolate_bulge_arc": "pbs_gis.dxf.extract",
+    "lwpolyline_to_coords": "pbs_gis.dxf.extract",
+    "save_layers_as_shapefiles": "pbs_gis.dxf.extract",
+    "solid3d_to_circle": "pbs_gis.dxf.extract",
+    "_solid3d_center_2d": "pbs_gis.dxf.extract",
+    "_solid3d_to_2d_polygon": "pbs_gis.dxf.extract",
+    "_solid3d_to_world_points": "pbs_gis.dxf.extract",
+    "OD_EXTENSION_DICT_KEY": "pbs_gis.dxf.map_od",
+    "attach_od_to_entity": "pbs_gis.dxf.map_od",
+    "encode_od_1004": "pbs_gis.dxf.map_od",
+    "get_table_handle_by_name": "pbs_gis.dxf.map_od",
+    "LayerSpec": "pbs_gis.cad",
+    "Style": "pbs_gis.cad",
+    "export_layers": "pbs_gis.cad",
+    "load_styles": "pbs_gis.cad",
+    "smooth_polygons": "pbs_gis.geometry",
+    "smooth_partition": "pbs_gis.geometry",
+    "partition_along": "pbs_gis.geometry",
+    "absorb_small": "pbs_gis.geometry",
+    "buffer_ring_zones": "pbs_gis.geometry",
+    "classify_direction": "pbs_gis.geometry",
+    "distance_to_nearest": "pbs_gis.geometry",
+    "extend_line": "pbs_gis.geometry",
+    "filter_lines_by_direction": "pbs_gis.geometry",
+    "find_column": "pbs_gis.geometry",
+    "lines_to_polygon": "pbs_gis.geometry",
+    "load_and_union": "pbs_gis.geometry",
+    "make_valid_gdf": "pbs_gis.geometry",
+    "morphological_filter": "pbs_gis.geometry",
+    "points_with_buffers": "pbs_gis.geometry",
+    "repair_geometry": "pbs_gis.geometry",
+    "remove_inner_rings": "pbs_gis.geometry",
+    "snap_endpoints": "pbs_gis.geometry",
+    "strip_utm_zone_prefix": "pbs_gis.geometry",
+    "close_gaps": "pbs_gis.geometry",
+    "close_slits": "pbs_gis.geometry",
+    "transfer_spikes": "pbs_gis.geometry",
+    "weld_fragments": "pbs_gis.geometry",
+    "remove_spikes": "pbs_gis.geometry",
+    "remove_spikes_geom": "pbs_gis.geometry",
+    "subtract_geometries": "pbs_gis.geometry",
+    "subtract_smaller_overlaps": "pbs_gis.geometry",
+    "to_single_part": "pbs_gis.geometry",
+    "area_by_category": "pbs_gis.reporting",
+    "area_report": "pbs_gis.reporting",
+    "conflict_matrix": "pbs_gis.reporting",
+    "intersection_areas": "pbs_gis.reporting",
+    "find_flurstuecke": "pbs_gis.alkis",
+    "register_features": "pbs_gis.georef",
+    "SimilarityTransform": "pbs_gis.georef",
+    "EinpassungError": "pbs_gis.einpassung",
+    "apply_points": "pbs_gis.einpassung",
+    "chain_over_overview": "pbs_gis.einpassung",
+    "chamfer_field": "pbs_gis.einpassung",
+    "coarse_fit": "pbs_gis.einpassung",
+    "compose": "pbs_gis.einpassung",
+    "icp_helmert": "pbs_gis.einpassung",
+    "isolation": "pbs_gis.einpassung",
+    "overview_vertices": "pbs_gis.einpassung",
+    "reference_rings": "pbs_gis.einpassung",
+    "resample": "pbs_gis.einpassung",
+    "sample_rings": "pbs_gis.einpassung",
+    "sheet_mosaic": "pbs_gis.einpassung",
+    "sheet_vectors": "pbs_gis.einpassung",
+    "vertices": "pbs_gis.einpassung",
+    "fetch_classified_features": "pbs_gis.atkis",
+    "fetch_classified_guide": "pbs_gis.atkis",
+    "catalog": "pbs_gis.catalog",
+    "quick_map": "pbs_gis.maps",
+    "Recipe": "pbs_gis.recipes",
+    "apply_attribute_mappings": "pbs_gis.recipes",
+    "check_recipe_layers": "pbs_gis.recipes",
+    "list_recipes": "pbs_gis.recipes",
+    "load_recipe": "pbs_gis.recipes",
+    "run_multi_layer_recipe": "pbs_gis.recipes",
+    "run_recipe": "pbs_gis.recipes",
+}
+
+
+def __getattr__(name: str):
+    module = _EXPORTS.get(name)
+    if module is None:
+        try:
+            return importlib.import_module(f"{__name__}.{name}")
+        except ModuleNotFoundError as exc:
+            if exc.name != f"{__name__}.{name}":
+                raise
+            raise AttributeError(
+                f"module {__name__!r} has no attribute {name!r}"
+            ) from None
+    value = getattr(importlib.import_module(module), name)
+    globals()[name] = value
+    return value
+
+
+def __dir__():
+    return sorted(set(globals()) | set(_EXPORTS))
+
 
 __all__ = [
     # Markdown tables
