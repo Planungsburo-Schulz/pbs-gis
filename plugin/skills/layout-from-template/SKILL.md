@@ -194,6 +194,8 @@ layer.setLabeling(QgsVectorLayerSimpleLabeling(pal)); layer.setLabelsEnabled(Tru
 
 **Reference-check before declaring done.** Open one prior project's export from a sibling `Export/` (or `Ausgabe/`, `Output/Karten/`) directory and compare against it: title-box size, legend font/box, label colour+buffer, area-role choice, info-block address. State which reference you compared and each element's verdict. A map that was never diffed against the corpus has not met the house style.
 
+**Source layers stay in the project.** The project QGIS keeps the source layers behind the map (Kataster/Flurstücke, official geometries, background, topic layers), so the recipient can verify the map against the originals — siehe Arbeitsregel 3c (BEREICHS-REGELN.md).
+
 ### Per-project tuning the user does (NOT in skill scope)
 
 These are judgement calls — propose if asked, but don't auto-apply:
