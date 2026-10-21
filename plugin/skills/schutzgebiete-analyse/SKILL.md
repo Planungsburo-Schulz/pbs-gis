@@ -11,7 +11,7 @@ Wiederkehrender Task: für ein Projekt die relevanten Schutzgebiete in der Umgeb
 ### Required clarifications (in EINER Runde)
 
 1. **Bundesland → Recipe-Auswahl**
-   - Mecklenburg-Vorpommern → `mv_alkis` (Layer: `naturschutzrecht`, `schutzgebiet_natur`, `denkmalschutz`)
+   - Mecklenburg-Vorpommern → `mv_lung_schutzgebiete` (NSG, LSG, FFH, SPA, Nationalpark, Naturpark, Biosphärenreservat, GLB, Naturdenkmale) und `mv_lung_wasserschutz` (WSG, Überschwemmungsgebiete, Küstenschutzgebiete); `mv_alkis` nur für `denkmalschutz`. Ein von Hand übergebener `extent` ist in EPSG:5650 anzugeben, `input_boundary` wird automatisch umprojiziert.
    - Schleswig-Holstein → `sh_lrp_karte1` (22 Schutzgebiet-Layer: Natura 2000, FFH, SPA, NSG, Biosphärenreservat, Biotopverbund, WSG-Zonen, Wiesenvogel, Seeadler, …) plus `sh_uwat` für WRRL-Layer
    - Andere Bundesländer → Recipe ggf. erst anlegen (analog zu `sh_lrp_karte1`)
 

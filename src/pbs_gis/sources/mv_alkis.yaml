@@ -131,17 +131,7 @@ layers:
     title: "Ortslagen"
     tags: [ortslage, siedlung]
 
-  # --- Schutzgebiete / Recht ---
-  naturschutzrecht:
-    wfs_layer: "adv:AX_NaturUmweltOderBodenschutzrecht"
-    title: "Natur-, Umwelt- oder Bodenschutzrecht"
-    tags: [naturschutz, umweltschutz, bodenschutz, recht]
-
-  schutzgebiet_natur:
-    wfs_layer: "adv:AX_SchutzgebietNachNaturUmweltOderBodenschutzrecht"
-    title: "Schutzgebiete (Natur/Umwelt/Bodenschutz)"
-    tags: [schutzgebiet, naturschutz, umweltschutz]
-
+  # --- Recht ---
   denkmalschutz:
     wfs_layer: "adv:AX_Denkmalschutzrecht"
     title: "Denkmalschutzrecht"
