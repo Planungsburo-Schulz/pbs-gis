@@ -22,13 +22,17 @@ Field mapping (must stay in lockstep with ManifestDatei):
     artefakt       : str   — artefact file name (echo)
     hash           : str   — sha256 hex of the artefact bytes
     parameter      : dict  — echo of the generation parameters
-    quellen        : list  — [{pfad, hash}] input provenance (sha256 each)
+    quellen        : list  — [{pfad, hash[, quell_stand, dienst]}] input
+                             provenance (sha256 each); quell_stand (date|null)
+                             and dienst only where the source has a
+                             ``<quelle>.quellstand.json`` (wfs.download)
     werkzeug       : str   — producer tool/version (diagnostic)
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -41,6 +45,9 @@ import yaml
 MANIFEST_SCHEMA_VERSION = 1
 
 MANIFEST_SUFFIX = ".manifest.yaml"
+
+# Beistell-Datei des Quell-Stands (geschrieben von wfs.download, FB 3.34b).
+QUELLSTAND_SUFFIX = ".quellstand.json"
 
 
 def sha256_file(path: str | Path) -> str:
@@ -81,6 +88,25 @@ def _rel(path: Path, basis: Path | None) -> str:
     return str(path)
 
 
+def _quell_stand(quelle: Path) -> dict[str, str | None]:
+    """``quell_stand`` und ``dienst`` aus der Beistell-Datei
+    ``<quelle>.quellstand.json``, die ``wfs.download`` neben jede Download-Datei
+    legt; ohne Beistell-Datei keines der beiden Felder.  Eine Beistell-Datei,
+    die kein JSON-Objekt mit ``dienst`` ist, bricht: ein Manifest dokumentiert
+    keine Herkunft, die es nicht lesen kann."""
+    beistell = quelle.with_name(quelle.name + QUELLSTAND_SUFFIX)
+    if not beistell.exists():
+        return {}
+    try:
+        daten = json.loads(beistell.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        raise ValueError(f"Quell-Stand-Beistell-Datei ist kein gültiges JSON: {beistell}") from exc
+    dienst = daten.get("dienst") if isinstance(daten, dict) else None
+    if not isinstance(dienst, str) or not dienst:
+        raise ValueError(f"Quell-Stand-Beistell-Datei ohne 'dienst': {beistell}")
+    return {"quell_stand": daten.get("quell_stand"), "dienst": dienst}
+
+
 def write_manifest(
     artefakt: str | Path,
     *,
@@ -112,12 +138,14 @@ def write_manifest(
 
     basis_path = Path(basis) if basis is not None else None
 
-    quellen_out: list[dict[str, str]] = []
+    quellen_out: list[dict[str, str | None]] = []
     for q in quellen:
         q = Path(q)
         if not q.exists():
             raise FileNotFoundError(f"Quelle für Manifest fehlt: {q}")
-        quellen_out.append({"pfad": _rel(q, basis_path), "hash": sha256_file(q)})
+        eintrag: dict[str, str | None] = {"pfad": _rel(q, basis_path), "hash": sha256_file(q)}
+        eintrag.update(_quell_stand(q))
+        quellen_out.append(eintrag)
 
     manifest = {
         "schema_version": MANIFEST_SCHEMA_VERSION,

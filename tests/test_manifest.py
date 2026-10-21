@@ -12,6 +12,7 @@ emission against the authoritative ``pbs_projekt.schema.ManifestDatei`` model
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import sys
 from datetime import date
@@ -87,6 +88,67 @@ def test_write_manifest_missing_quelle_raises(tmp_path):
     art = _write(tmp_path / "a.yaml", "x")
     with pytest.raises(FileNotFoundError):
         write_manifest(art, parameter={}, quellen=[tmp_path / "gone.gpkg"], werkzeug="w")
+
+
+def _beistell(quelle: Path, inhalt) -> Path:
+    p = quelle.with_name(quelle.name + ".quellstand.json")
+    p.write_text(inhalt if isinstance(inhalt, str) else json.dumps(inhalt), encoding="utf-8")
+    return p
+
+
+def test_write_manifest_liest_beistelldatei(tmp_path):
+    art = _write(tmp_path / "plan.dxf", "x")
+    mit = _write(tmp_path / "flst.gpkg", "a")
+    ohne_stand = _write(tmp_path / "geb.gpkg", "b")
+    ohne = _write(tmp_path / "eigen.gpkg", "c")
+    _beistell(mit, {"quell_stand": "2026-07-09", "dienst": "https://d.invalid/wfs",
+                    "abgerufen": "2026-10-21T10:00:00+02:00"})
+    _beistell(ohne_stand, {"quell_stand": None, "dienst": "https://d.invalid/wfs",
+                           "abgerufen": None})
+    manifest_path = write_manifest(
+        art, parameter={}, quellen=[mit, ohne_stand, ohne], werkzeug="w", basis=tmp_path
+    )
+    q = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))["quellen"]
+    assert q[0] == {"pfad": "flst.gpkg", "hash": _sha(b"a"),
+                    "quell_stand": "2026-07-09", "dienst": "https://d.invalid/wfs"}
+    assert q[1] == {"pfad": "geb.gpkg", "hash": _sha(b"b"),
+                    "quell_stand": None, "dienst": "https://d.invalid/wfs"}
+    assert q[2] == {"pfad": "eigen.gpkg", "hash": _sha(b"c")}  # keine Beistell-Datei: kein Feld
+
+
+def test_manifest_aus_wfs_download_traegt_quell_stand(tmp_path, monkeypatch):
+    """Die Kante zwischen Schreiber (wfs.download) und Leser (write_manifest):
+    dieselbe Beistell-Datei, ohne Absprache über den Namen hinaus."""
+    import geopandas as gpd
+    from shapely.geometry import Point
+
+    from pbs_gis import wfs
+
+    monkeypatch.setattr(wfs.gpd, "read_file", lambda source, **kw: gpd.GeoDataFrame(
+        {"geometry": [Point(400000, 6035000)]}, crs="EPSG:25833"))
+    monkeypatch.setattr(wfs, "_ermittle_quell_stand", lambda dienst, layer, version: "2026-07-09")
+    out = tmp_path / "flst.gpkg"
+    wfs.download("https://d.invalid/wfs?x=1", "adv:AX_Flurstueck", crs="EPSG:25833",
+                 cache_dir=tmp_path / "cache", output_path=out)
+    art = _write(tmp_path / "plan.dxf", "x")
+    m = yaml.safe_load(write_manifest(art, parameter={}, quellen=[out], werkzeug="w",
+                                      basis=tmp_path).read_text(encoding="utf-8"))
+    assert m["quellen"][0]["quell_stand"] == "2026-07-09"
+    assert m["quellen"][0]["dienst"] == "https://d.invalid/wfs"
+
+
+@pytest.mark.parametrize("inhalt", [
+    "{kein json",
+    {"quell_stand": "2026-07-09", "abgerufen": None},  # dienst fehlt
+    ["kein", "objekt"],
+])
+def test_write_manifest_unlesbare_beistelldatei_bricht(tmp_path, inhalt):
+    art = _write(tmp_path / "plan.dxf", "x")
+    q = _write(tmp_path / "flst.gpkg", "a")
+    beistell = _beistell(q, inhalt)
+    with pytest.raises(ValueError, match=str(beistell)):
+        write_manifest(art, parameter={}, quellen=[q], werkzeug="w")
+    assert not (tmp_path / "plan.dxf.manifest.yaml").exists()
 
 
 def test_sha256_file_matches(tmp_path):
@@ -235,3 +297,26 @@ def test_emission_validates_against_pbs_projekt_manifestdatei(tmp_path):
     assert model.artefakt == "planstand.dxf"
     assert model.quellen[0].pfad == "Geodaten_src.gpkg"
     assert str(model.stand) == date.today().isoformat()
+
+
+def test_emission_mit_beistelldateien_validiert_gegen_manifestdatei(tmp_path):
+    ManifestDatei = _load_manifest_datei_model()
+
+    art = _write(tmp_path / "planstand.dxf", "dxf-bytes")
+    mit = _write(tmp_path / "flst.gpkg", "a")
+    ohne_stand = _write(tmp_path / "geb.gpkg", "b")
+    ohne = _write(tmp_path / "eigen.gpkg", "c")
+    _beistell(mit, {"quell_stand": "2026-07-09", "dienst": "https://d.invalid/wfs",
+                    "abgerufen": "2026-10-21T10:00:00+02:00"})
+    _beistell(ohne_stand, {"quell_stand": None, "dienst": "https://d.invalid/wfs",
+                           "abgerufen": None})
+    manifest_path = write_manifest(
+        art, parameter={}, quellen=[mit, ohne_stand, ohne],
+        werkzeug=werkzeug_id("cad_export"), basis=tmp_path,
+    )
+    model = ManifestDatei(**yaml.safe_load(manifest_path.read_text(encoding="utf-8")))
+    assert str(model.quellen[0].quell_stand) == "2026-07-09"
+    assert model.quellen[0].dienst == "https://d.invalid/wfs"
+    assert model.quellen[1].quell_stand is None
+    assert model.quellen[1].dienst == "https://d.invalid/wfs"
+    assert model.quellen[2].quell_stand is None and model.quellen[2].dienst is None
