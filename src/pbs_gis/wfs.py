@@ -178,7 +178,8 @@ def register_pfad() -> Path:
 
 
 def _register_eintragen(dienst: str, quell_stand: str) -> None:
-    """Setzt ``dienste[dienst]`` im Register (atomar: temp + rename). Ein
+    """Setzt ``dienste[dienst]`` im Register (atomar: temp + rename), nie auf
+    einen älteren Stand als den eingetragenen. Ein
     vorhandenes, nicht verwertbares Register bleibt unberührt und wird mit
     EINER lauten Zeile gemeldet."""
     pfad = register_pfad()
@@ -197,6 +198,12 @@ def _register_eintragen(dienst: str, quell_stand: str) -> None:
             return
     else:
         register = {"schema_version": QUELLSTAND_SCHEMA_VERSION, "dienste": {}}
+    # Der NEUESTE gesehene Stand bleibt: ein Abruf, der ein älteres Datum liest,
+    # rückt nur `gesehen` vor (ISO-Daten vergleichen sich als Text richtig).
+    alt = register["dienste"].get(dienst)
+    alt_stand = alt.get("quell_stand") if isinstance(alt, dict) else None
+    if isinstance(alt_stand, str) and alt_stand > quell_stand:
+        quell_stand = alt_stand
     register["dienste"][dienst] = {
         "quell_stand": quell_stand,
         "gesehen": datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -392,7 +399,10 @@ def download(
     if not crs:
         raise ValueError("crs is required (e.g. 'EPSG:25833'). No silent defaults — wrong CRS causes silent data corruption.")
 
-    dienst = _dienst(url)
+    # Kennung je Dienst UND Layer: der publizierte Stand hängt am Metadatensatz
+    # des Layers, und zwei Layer eines Dienstes tragen eigene Sätze — eine
+    # Kennung nur je Dienst ließe den Register-Eintrag zwischen ihnen springen.
+    dienst = f"{_dienst(url)}#{layer}"
 
     # A bbox in another CRS than the request's is not an error at the service:
     # it matches nothing and answers zero features. So a hand-given extent is

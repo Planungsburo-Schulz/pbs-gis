@@ -134,7 +134,7 @@ def test_manifest_aus_wfs_download_traegt_quell_stand(tmp_path, monkeypatch):
     m = yaml.safe_load(write_manifest(art, parameter={}, quellen=[out], werkzeug="w",
                                       basis=tmp_path).read_text(encoding="utf-8"))
     assert m["quellen"][0]["quell_stand"] == "2026-07-09"
-    assert m["quellen"][0]["dienst"] == "https://d.invalid/wfs"
+    assert m["quellen"][0]["dienst"] == "https://d.invalid/wfs#adv:AX_Flurstueck"
 
 
 @pytest.mark.parametrize("inhalt", [

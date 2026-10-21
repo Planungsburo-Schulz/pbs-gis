@@ -24,6 +24,8 @@ from pbs_gis import wfs
 from pbs_gis.recipes import load_recipe
 
 DIENST = "https://stub.invalid/wfs"
+# Kennung je Dienst UND Layer: zwei Layer eines Dienstes tragen eigene Metadatensätze.
+KENNUNG = DIENST + "#adv:AX_Flurstueck"
 CSW_FLST = "https://csw.invalid/csw?REQUEST=GetRecordById&ID=flst"
 CSW_GEB = "https://csw.invalid/csw?REQUEST=GetRecordById&ID=geb"
 CSW_DIENST = "https://csw.invalid/csw?REQUEST=GetRecordById&ID=dienst"
@@ -173,7 +175,7 @@ def test_revision_datum_des_angefragten_layers(tmp_path, monkeypatch, getfeature
     _, out = _download(tmp_path)
     s = _sidecar(out)
     assert s["quell_stand"] == "2026-08-15"
-    assert s["dienst"] == DIENST
+    assert s["dienst"] == KENNUNG
     assert s["abgerufen"]  # ISO-Zeitpunkt
     (cache,) = _cache_files(tmp_path)
     assert _sidecar(cache) == s
@@ -215,7 +217,7 @@ def test_metadataurl_fehlt_ergibt_null(tmp_path, monkeypatch, getfeature):
     _http(monkeypatch, _caps(flst_url=None))
     _, out = _download(tmp_path)
     assert _sidecar(out)["quell_stand"] is None
-    assert _sidecar(out)["dienst"] == DIENST
+    assert _sidecar(out)["dienst"] == KENNUNG
 
 
 def test_netzfehler_ergibt_null_und_download_laeuft(tmp_path, monkeypatch, getfeature):
@@ -236,7 +238,7 @@ def test_dienst_ohne_query_string(tmp_path, monkeypatch, getfeature):
     _http(monkeypatch, _caps(), {CSW_FLST: _csw()})
     recipe = _recipe(tmp_path, url=DIENST + "?map=alkis&x=1")
     _, out = _download(tmp_path, recipe=recipe)
-    assert _sidecar(out)["dienst"] == DIENST
+    assert _sidecar(out)["dienst"] == KENNUNG
 
 
 # --- Cache ----------------------------------------------------------------
@@ -261,7 +263,7 @@ def test_alter_cache_ohne_beistelldatei_gibt_null(tmp_path, monkeypatch, getfeat
     _, out = _download(tmp_path, no_cache=False, output="alt.gpkg")
     s = _sidecar(out)
     assert s["quell_stand"] is None
-    assert s["dienst"] == DIENST
+    assert s["dienst"] == KENNUNG
 
 
 # --- Register ---------------------------------------------------------------
@@ -278,8 +280,8 @@ def test_register_wird_geschrieben_und_erhaelt_fremde_eintraege(tmp_path, monkey
 
     r = json.loads(reg.read_text(encoding="utf-8"))
     assert r["schema_version"] == 1
-    assert r["dienste"][DIENST]["quell_stand"] == "2026-08-15"
-    assert r["dienste"][DIENST]["gesehen"]
+    assert r["dienste"][KENNUNG]["quell_stand"] == "2026-08-15"
+    assert r["dienste"][KENNUNG]["gesehen"]
     assert r["dienste"]["https://andere.invalid/wfs"]["quell_stand"] == "2025-01-01"
 
 
@@ -288,14 +290,14 @@ def test_register_neu_angelegt(tmp_path, monkeypatch, getfeature):
     _http(monkeypatch, _caps(), {CSW_FLST: _csw(citation=[("2026-08-15", "revision")])})
     _download(tmp_path)
     r = json.loads(_register().read_text(encoding="utf-8"))
-    assert set(r["dienste"]) == {DIENST}
+    assert set(r["dienste"]) == {KENNUNG}
 
 
 def test_null_ueberschreibt_keinen_eintrag(tmp_path, monkeypatch, getfeature):
     reg = _register()
     reg.parent.mkdir(parents=True)
     vorher = json.dumps({"schema_version": 1, "dienste": {
-        DIENST: {"quell_stand": "2026-07-09", "gesehen": "2026-07-10T00:00:00+00:00"}}})
+        KENNUNG: {"quell_stand": "2026-07-09", "gesehen": "2026-07-10T00:00:00+00:00"}}})
     reg.write_text(vorher, encoding="utf-8")
     _http(monkeypatch, OSError("Netz weg"))
     _download(tmp_path)
@@ -364,4 +366,19 @@ def test_register_validiert_gegen_pbs_projekt_quellstandregister(tmp_path, monke
     data = json.loads(_register().read_text(encoding="utf-8"))
     reg = schema.QuellstandRegister.model_validate(data)
     assert reg.schema_version == wfs.QUELLSTAND_SCHEMA_VERSION == schema.QUELLSTAND_SCHEMA_VERSION
-    assert str(reg.dienste[DIENST].quell_stand) == "2026-08-15"
+    assert str(reg.dienste[KENNUNG].quell_stand) == "2026-08-15"
+
+
+def test_aelterer_stand_senkt_das_register_nicht(tmp_path, monkeypatch, getfeature):
+    """Das Register hält je Kennung den NEUESTEN gesehenen Stand: ein Abruf, der
+    ein älteres Datum liest, rückt nur `gesehen` vor."""
+    reg = _register()
+    reg.parent.mkdir(parents=True)
+    reg.write_text(json.dumps({"schema_version": 1, "dienste": {
+        KENNUNG: {"quell_stand": "2026-09-01", "gesehen": "2026-09-02T00:00:00+00:00"}}}),
+                   encoding="utf-8")
+    _http(monkeypatch, _caps(), {CSW_FLST: _csw(citation=[("2026-07-09", "revision")])})
+    _download(tmp_path)
+    r = json.loads(reg.read_text(encoding="utf-8"))
+    assert r["dienste"][KENNUNG]["quell_stand"] == "2026-09-01"
+    assert r["dienste"][KENNUNG]["gesehen"] != "2026-09-02T00:00:00+00:00"
