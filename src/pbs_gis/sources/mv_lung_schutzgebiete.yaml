@@ -1,5 +1,5 @@
 name: mv_lung_schutzgebiete
-description: "MV Schutzgebiete — LUNG-Umweltkarten-WFS (mv_a2_schutzgeb_wfs.php): NSG, LSG, FFH, SPA, Nationalpark, Naturpark, Biosphärenreservat, Geschützte Landschaftsbestandteile, Flächen- und Punkt-Naturdenkmale. Ausgabe in EPSG:25833 mit dekodierten Namen; ein von Hand übergebener `extent` ist in EPSG:5650 anzugeben, `input_boundary` wird automatisch umprojiziert."
+description: "MV Schutzgebiete — LUNG-Umweltkarten-WFS (mv_a2_schutzgeb_wfs.php): NSG, LSG, FFH, SPA, Nationalpark, Naturpark, Biosphärenreservat, Geschützte Landschaftsbestandteile, Flächen- und Punkt-Naturdenkmale. Ausgabe in EPSG:25833 mit dekodierten Namen; ein von Hand übergebener `extent` gilt in der Ausgabe-Projektion EPSG:25833 (`ausgabe_crs`) und wird in die Dienst-Projektion EPSG:5650 umgerechnet, `input_boundary` wird automatisch umprojiziert."
 tags: [schutzgebiet, naturschutz, nsg, lsg, ffh, spa, natura2000, nationalpark, naturpark, biosphaerenreservat, naturdenkmal, MV, mecklenburg-vorpommern, LUNG]
 
 connection:

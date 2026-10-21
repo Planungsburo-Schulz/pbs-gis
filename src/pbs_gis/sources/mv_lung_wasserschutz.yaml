@@ -1,5 +1,5 @@
 name: mv_lung_wasserschutz
-description: "MV Wasser- und Küstenschutz — LUNG-Umweltkarten-WFS (wg_schutzgebiete): Wasserschutzgebiete, Überschwemmungsgebiete, Küstenschutzgebiete. Ausgabe in EPSG:25833; ein von Hand übergebener `extent` ist in EPSG:5650 anzugeben, `input_boundary` wird automatisch umprojiziert."
+description: "MV Wasser- und Küstenschutz — LUNG-Umweltkarten-WFS (wg_schutzgebiete): Wasserschutzgebiete, Überschwemmungsgebiete, Küstenschutzgebiete. Ausgabe in EPSG:25833; ein von Hand übergebener `extent` gilt in der Ausgabe-Projektion EPSG:25833 (`ausgabe_crs`) und wird in die Dienst-Projektion EPSG:5650 umgerechnet, `input_boundary` wird automatisch umprojiziert."
 tags: [wasserschutzgebiet, wsg, ueberschwemmungsgebiet, kuestenschutz, schutzgebiet, MV, mecklenburg-vorpommern, LUNG]
 
 connection:

@@ -228,7 +228,7 @@ def erzeuge(quelle, ausgabe, titel, untertitel, *, stand, epsg, ebene=None, wms=
         f"MASCHINE-Derivate, erzeugt aus dem Projektbestand. Nicht selbst Quelle.\n\n"
         f"- Quelle: `{quelle}`\n"
         f"- sha256 der Quelle: `{src_sha}`\n"
-        f"- CRS: ETRS89 / UTM 33N (EPSG:{epsg})\n"
+        f"- CRS: {crs_name} (EPSG:{epsg})\n"
         f"- Erzeugt mit: `python -m pbs_gis.uebersichtskarte` ({werkzeug_version()})\n\n"
         "| Datei | Zweck |\n|---|---|\n"
         f"| `{pdf.name}` | Übersichtskarte A4 quer, M 1:{massstab} |\n"
