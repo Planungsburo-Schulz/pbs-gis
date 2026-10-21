@@ -36,8 +36,15 @@ def _run(server: Path, hide_pbs_gis_install: bool, call: str) -> subprocess.Comp
         import importlib.util, json, sys
         from pathlib import Path
         # Simuliert einen Interpreter ohne pbs_gis-Install: weder PYTHONPATH
-        # noch ein editable-Install liefern das Paket.
-        sys.path[:] = [p for p in sys.path if Path(p).resolve() != Path({str(_REPO / "src")!r})]
+        # noch ein editable-Install liefern das Paket. Entfernt wird jeder
+        # Eintrag, aus dem pbs_gis importierbar ist, nicht nur das src/ dieses
+        # Checkouts: die geteilte venv zeigt per .pth auf das src/ eines
+        # anderen Checkouts (Main bzw. Worktree).
+        sys.path[:] = [
+            p for p in sys.path
+            if Path(p).resolve() != Path({str(_REPO / "src")!r})
+            and not (Path(p) / "pbs_gis").is_dir()
+        ]
         sys.meta_path[:] = [f for f in sys.meta_path if "editable" not in type(f).__module__.lower() and "editable" not in type(f).__name__.lower()]
         assert importlib.util.find_spec("pbs_gis") is None, "pbs_gis noch auffindbar"
         spec = importlib.util.spec_from_file_location("server_under_test", {str(server)!r})
