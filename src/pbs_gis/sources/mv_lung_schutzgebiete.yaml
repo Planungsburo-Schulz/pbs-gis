@@ -1,0 +1,63 @@
+name: mv_lung_schutzgebiete
+description: "MV Schutzgebiete — LUNG-Umweltkarten-WFS (mv_a2_schutzgeb_wfs.php): NSG, LSG, FFH, SPA, Nationalpark, Naturpark, Biosphärenreservat, Geschützte Landschaftsbestandteile, Flächen- und Punkt-Naturdenkmale. Ausgabe in EPSG:25833 mit dekodierten Namen; ein von Hand übergebener `extent` ist in EPSG:5650 anzugeben, `input_boundary` wird automatisch umprojiziert."
+tags: [schutzgebiet, naturschutz, nsg, lsg, ffh, spa, natura2000, nationalpark, naturpark, biosphaerenreservat, naturdenkmal, MV, mecklenburg-vorpommern, LUNG]
+
+connection:
+  type: wfs
+  url: "https://www.umweltkarten.mv-regierung.de/script/mv_a2_schutzgeb_wfs.php"
+  version: "1.1.0"
+  crs: "EPSG:5650"
+  bbox_kvp: false
+
+hooks: lung_demojibake.py
+
+layers:
+  nsg:
+    wfs_layer: "t2_nsg_f"
+    title: "Naturschutzgebiete"
+    tags: [nsg, naturschutzgebiet]
+
+  lsg:
+    wfs_layer: "t2_lsg_f"
+    title: "Landschaftsschutzgebiete"
+    tags: [lsg, landschaftsschutzgebiet]
+
+  ffh:
+    wfs_layer: "t2_ffhmv_f"
+    title: "FFH-Gebiete"
+    tags: [ffh, natura2000]
+
+  spa:
+    wfs_layer: "t2_spamv_f"
+    title: "EU-Vogelschutzgebiete (SPA)"
+    tags: [spa, vogelschutz, natura2000]
+
+  nationalpark:
+    wfs_layer: "t2_np_f"
+    title: "Nationalparke"
+    tags: [nationalpark, np]
+
+  naturpark:
+    wfs_layer: "t2_nlp_f"
+    title: "Naturparke"
+    tags: [naturpark, nlp]
+
+  biosphaerenreservat:
+    wfs_layer: "t2_brn_f"
+    title: "Biosphärenreservate"
+    tags: [biosphärenreservat, biosphaere]
+
+  geschuetzter_landschaftsbestandteil:
+    wfs_layer: "t2_glb_f"
+    title: "Geschützte Landschaftsbestandteile"
+    tags: [glb, landschaftsbestandteil]
+
+  naturdenkmal_flaeche:
+    wfs_layer: "t2_fnd_f"
+    title: "Flächennaturdenkmale"
+    tags: [fnd, naturdenkmal, fläche]
+
+  naturdenkmal_punkt:
+    wfs_layer: "t2_fnd_p"
+    title: "Naturdenkmale (Punkte)"
+    tags: [naturdenkmal, nd, punkt]

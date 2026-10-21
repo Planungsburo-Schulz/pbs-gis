@@ -1,0 +1,28 @@
+name: mv_lung_wasserschutz
+description: "MV Wasser- und Küstenschutz — LUNG-Umweltkarten-WFS (wg_schutzgebiete): Wasserschutzgebiete, Überschwemmungsgebiete, Küstenschutzgebiete. Ausgabe in EPSG:25833; ein von Hand übergebener `extent` ist in EPSG:5650 anzugeben, `input_boundary` wird automatisch umprojiziert."
+tags: [wasserschutzgebiet, wsg, ueberschwemmungsgebiet, kuestenschutz, schutzgebiet, MV, mecklenburg-vorpommern, LUNG]
+
+connection:
+  type: wfs
+  url: "https://umweltkarten.lung-mv.de/dienste/wg_schutzgebiete"
+  version: "1.1.0"
+  crs: "EPSG:5650"
+  bbox_kvp: false
+
+hooks: lung_demojibake.py
+
+layers:
+  wsg:
+    wfs_layer: "wsg"
+    title: "Wasserschutzgebiete"
+    tags: [wsg, wasserschutzgebiet]
+
+  uesg:
+    wfs_layer: "uesg"
+    title: "Überschwemmungsgebiete"
+    tags: [uesg, ueberschwemmungsgebiet]
+
+  ksg:
+    wfs_layer: "ksg"
+    title: "Küstenschutzgebiete"
+    tags: [ksg, kuestenschutz]
