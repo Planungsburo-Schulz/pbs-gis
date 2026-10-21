@@ -28,3 +28,6 @@ htmlcov/
 .DS_Store
 Thumbs.db
 mcp/__pycache__/
+
+# Download-Cache der Quell-Abrufe (atkis.py/osm.py legen ihn in der cwd an)
+download_cache/
