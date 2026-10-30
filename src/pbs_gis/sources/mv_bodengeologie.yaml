@@ -4,14 +4,20 @@ tags: [boden, bodengeologie, moor, moore, feldkapazität, nitrat, MV, mecklenbur
 
 connection:
   type: wfs
-  url: "https://www.umweltkarten.mv-regierung.de/script/mv_a7_bodengeologie_wfs.php"
-  qgis_name: "mv_a7_bodengeologie_wfs"
+  url: "https://umweltkarten.lung-mv.de/dienste/gb_boden"
   version: "1.1.0"
-  crs: "EPSG:25833"
+  # Der Dienst wertet eine BBOX nur in seiner Standard-Projektion EPSG:5650
+  # aus (auch mit EPSG:25833-Zusatz: 0 Treffer); gelesen wird darum in 5650,
+  # der Hook liefert EPSG:25833.
+  crs: "EPSG:5650"
+  bbox_kvp: false
+
+hooks: lung_demojibake.py
+ausgabe_crs: "EPSG:25833"
 
 layers:
   moore:
-    wfs_layer: "t7_moor_kbk25"
+    wfs_layer: "kbk25_kb"
     title: "Kohlenstoffreiche Böden inkl. Moore (KBK25)"
     tags: [moor, moore, kohlenstoff, torf, niedermoor, hochmoor, anmoor, KBK25]
     # Source: LUNG M-V, KBK25_KB Attributtabelle (Stand 09/2022)
@@ -49,31 +55,31 @@ layers:
       EINHEIT__lbl: bezeichnung
 
   feldkapazitaet:
-    wfs_layer: "t7_fk_100"
+    wfs_layer: "fk_100"
     title: "Feldkapazität (100 cm)"
     tags: [boden, feldkapazität, wasser]
 
   nutzbare_feldkapazitaet:
-    wfs_layer: "t7_nfk100"
+    wfs_layer: "nfk_100"
     title: "Nutzbare Feldkapazität (100 cm)"
     tags: [boden, feldkapazität, nutzbar, wasser]
 
   luftkapazitaet:
-    wfs_layer: "t7_lk_100"
+    wfs_layer: "lk_100"
     title: "Luftkapazität (100 cm)"
     tags: [boden, luftkapazität]
 
   durchwurzelungstiefe:
-    wfs_layer: "t7_we"
+    wfs_layer: "we"
     title: "Effektive Durchwurzelungstiefe"
     tags: [boden, durchwurzelungstiefe, wurzel]
 
   nitratauswaschung:
-    wfs_layer: "t7_pot_nag"
+    wfs_layer: "nag"
     title: "Potentielle Nitratauswaschungsgefährdung"
     tags: [boden, nitrat, auswaschung, grundwasser]
 
   bodenfunktionsbereiche:
-    wfs_layer: "t7_bfb"
+    wfs_layer: "bfb"
     title: "Bodenfunktionsbereiche"
     tags: [boden, bodenfunktion]

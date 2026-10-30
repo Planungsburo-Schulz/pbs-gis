@@ -10,7 +10,7 @@ from shapely.geometry import Point
 from pbs_gis.recipes import load_and_run_hook, load_recipe
 
 HOOK = "lung_demojibake.py"
-LUNG_RECIPES = ("mv_lung_schutzgebiete", "mv_lung_wasserschutz")
+LUNG_RECIPES = ("mv_lung_schutzgebiete", "mv_lung_wasserschutz", "mv_bodengeologie")
 
 
 def _fixture_gdf() -> gpd.GeoDataFrame:
@@ -63,9 +63,15 @@ def test_lung_schutzgebiete_layer_set():
     recipe = load_recipe("mv_lung_schutzgebiete")
     assert sorted(recipe.layer_aliases()) == sorted([
         "nsg", "lsg", "ffh", "spa", "nationalpark", "naturpark",
-        "biosphaerenreservat", "geschuetzter_landschaftsbestandteil",
-        "naturdenkmal_flaeche", "naturdenkmal_punkt",
+        "biosphaerenreservat", "naturdenkmal_flaeche",
     ])
+
+
+def test_lung_schutzgebiete_parks_not_swapped():
+    # im LUNG-Dienst ist nlp_f die Nationalpark-, np_f die Naturpark-Ebene
+    recipe = load_recipe("mv_lung_schutzgebiete")
+    assert recipe.get_layer_recipe("nationalpark").connection["layer"] == "nlp_f"
+    assert recipe.get_layer_recipe("naturpark").connection["layer"] == "np_f"
 
 
 def test_lung_wasserschutz_layer_set():

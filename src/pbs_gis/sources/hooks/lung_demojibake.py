@@ -1,13 +1,11 @@
-"""Post-Process-Hook für die LUNG-MV-Umweltkarten-WFS (Schutzgebiete, Wasserschutz).
+"""Post-Process-Hook für die LUNG-MV-WFS (ng_schutzgebiete, wg_schutzgebiete).
 
 Zwei Eigenheiten der Dienste, die hier ausgeglichen werden:
 
-* Der Schutzgebiets-Dienst (mv_a2_schutzgeb_wfs.php) liefert Textattribute
-  als UTF-8-Bytes, die als Latin-1 gelesen wurden („OstrÃ¼gen" statt
-  „Ostrügen"); der Wasserschutz-Dienst (wg_schutzgebiete) liefert
-  korrekten Text. Repariert wird je Wert nur, wenn die Rückwandlung
-  latin-1 -> utf-8 gelingt; korrekter Text und Nicht-Strings bleiben
-  unverändert.
+* Textattribute, die als UTF-8-Bytes ankommen, aber als Latin-1 gelesen
+  wurden („OstrÃ¼gen" statt „Ostrügen"), werden zurückgewandelt — je Wert
+  nur, wenn die Rückwandlung latin-1 -> utf-8 gelingt; korrekter Text und
+  Nicht-Strings bleiben unverändert.
 * Beide Dienste liefern in EPSG:5650 (ETRS89 / UTM zone 33N mit
   Zonen-Präfix im Rechtswert). Das Recipe liest deshalb in EPSG:5650;
   der Hook gibt das Ergebnis in EPSG:25833 zurück.
