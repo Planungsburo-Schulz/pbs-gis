@@ -71,6 +71,10 @@ DEFAULT_STROKE_WIDTH_PT = 1.73
 DEFAULT_PAGE_SIZE_PT = (1190.55, 841.89)
 #: Abstand der Kartenrahmenlinien von der Blattkante (pt), gemessene Vorlage.
 DEFAULT_FRAME_INSET_PT = 11.340222
+#: Defaults der Muster-Modus-Auswahl in :func:`sheet_vectors`; der
+#: Klassen-Modus wirft, wenn einer davon abweicht.
+_DEFAULT_STROKE_WIDTH_TOL = 0.005
+_DEFAULT_EXCLUDE_STROKE = "100%"
 
 _NUM = re.compile(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?")
 #: SVG-Pfadkommandos. ``e``/``E`` steht bewusst NICHT darin — es ist der
@@ -413,8 +417,8 @@ def sheet_vectors(
     *,
     dasharray=DEFAULT_DASHARRAY,
     stroke_width_pt: float | None = DEFAULT_STROKE_WIDTH_PT,
-    stroke_width_tol: float = 0.005,
-    exclude_stroke: str | None = "100%",
+    stroke_width_tol: float = _DEFAULT_STROKE_WIDTH_TOL,
+    exclude_stroke: str | None = _DEFAULT_EXCLUDE_STROKE,
     scale: float = 500.0,
     page_size_pt: tuple[float, float] = DEFAULT_PAGE_SIZE_PT,
     frame_inset_pt: float = DEFAULT_FRAME_INSET_PT,
@@ -443,8 +447,8 @@ def sheet_vectors(
             Stärken zeichnet, ist EINE Klasse mit zwei Signaturen). Ein Pfad
             gehört zu der Klasse, deren Signatur er trifft: Farbe exakt,
             Stärke innerhalb ``tol``; ``stroke_width_pt``,
-            ``stroke_width_tol`` und ``exclude_stroke`` wirken dann nicht.
-            Der Schlüssel ``"kataster"`` ist Pflicht; ``stroke_width_pt`` des
+            ``stroke_width_tol``, ``exclude_stroke`` und ``dasharray``
+            bleiben dann auf ihrem Default. Der Schlüssel ``"kataster"`` ist Pflicht; ``stroke_width_pt`` des
             Ergebnisses ist die Stärke seiner ersten Signatur.
 
     Raises:
@@ -454,7 +458,8 @@ def sheet_vectors(
             oder das Blatt trägt die Population nicht. Im Klassen-Modus
             außerdem: ``"kataster"`` fehlt, eine Klasse hat keine Signatur,
             ein Pfad passt auf zwei Klassen, oder zugleich ist ein
-            abweichendes ``dasharray`` gesetzt. Eine
+            abweichendes ``dasharray``, ``stroke_width_pt``,
+            ``stroke_width_tol`` oder ``exclude_stroke`` gesetzt. Eine
             LEERE Sparten-Klasse wirft nicht — ein Blatt ohne Leitung ist
             eine Fehlanzeige, kein Lesefehler.
     """
@@ -468,7 +473,20 @@ def sheet_vectors(
                 f"classes und dasharray={dasharray!r} zugleich — zwei Auswahl-"
                 "Modi in einem Aufruf; der Klassen-Modus wählt nicht über das "
                 "Strichmuster.")
-        signaturen = {name: (c,) if isinstance(c, StrokeClass) else tuple(c)
+        # Diese Argumente wirken nur im Muster-Modus; still übergangen sähe
+        # ein gesetzter Wert aus, als hätte er die Auswahl geformt.
+        muster_args = [(name, wert) for name, wert, default in (
+            ("stroke_width_pt", stroke_width_pt, DEFAULT_STROKE_WIDTH_PT),
+            ("stroke_width_tol", stroke_width_tol, _DEFAULT_STROKE_WIDTH_TOL),
+            ("exclude_stroke", exclude_stroke, _DEFAULT_EXCLUDE_STROKE),
+        ) if wert != default]
+        if muster_args:
+            raise EinpassungError(
+                "classes und "
+                + ", ".join(f"{name}={wert!r}" for name, wert in muster_args)
+                + " zugleich — diese Argumente wirken nur im Muster-Modus; im "
+                "Klassen-Modus tragen Farbe, Stärke und Toleranz die StrokeClass.")
+        signaturen ={name: (c,) if isinstance(c, StrokeClass) else tuple(c)
                       for name, c in classes.items()}
         leer = sorted(name for name, sig in signaturen.items() if not sig)
         if leer:

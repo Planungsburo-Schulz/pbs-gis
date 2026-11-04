@@ -401,6 +401,27 @@ def test_klassen_und_strichmuster_zugleich_wirft(farbplan):
         sheet_vectors(farbplan, 1, classes=KLASSEN, dasharray="3.0 3.0")
 
 
+@pytest.mark.parametrize("arg", [
+    {"stroke_width_pt": 1.02},
+    {"stroke_width_pt": None},
+    {"stroke_width_tol": 0.05},
+    {"exclude_stroke": None},
+    {"exclude_stroke": "50%"},
+])
+def test_klassenmodus_wirft_bei_muster_modus_argument(farbplan, arg):
+    """Im Klassen-Modus wirken diese Argumente nicht — gesetzt ist das laut."""
+    (name,) = arg
+    with pytest.raises(EinpassungError, match=f"classes und {name}="):
+        sheet_vectors(farbplan, 1, classes=KLASSEN, **arg)
+
+
+def test_klassenmodus_mit_ausdruecklichen_defaults_wirft_nicht(farbplan):
+    """Gegenprobe: die Defaults ausdrücklich übergeben ist kein zweiter Modus."""
+    sv = sheet_vectors(farbplan, 1, classes=KLASSEN, stroke_width_pt=1.73,
+                       stroke_width_tol=0.005, exclude_stroke="100%")
+    assert sorted(sv.classes) == ["kataster", "msp", "nsp"]
+
+
 def test_leere_kataster_klasse_wirft(farbplan):
     klassen = dict(KLASSEN, kataster=StrokeClass(SCHWARZ, 2.5))
     with pytest.raises(EinpassungError, match="Klasse 'kataster'"):
