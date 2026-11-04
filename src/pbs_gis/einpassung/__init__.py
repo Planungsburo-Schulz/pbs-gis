@@ -24,9 +24,10 @@ Pipeline (die Reihenfolge ist der Mechanismus, nicht Geschmack)
    dabei MESSGRÖSSEN.
 5. **Isolation** — :func:`isolation` weist aus, ob das Optimum überhaupt eins
    ist. Ein Median ohne Isolation ist kein Ergebnis.
-6. **Export** — der komponierte :class:`~pbs_gis.georef.SimilarityTransform`
-   auf Leitung und Signatur angewandt (:func:`apply_points`), je Blatt mit
-   seiner Lageklasse (eigener Anker vs. nur verkettet).
+6. **Export** — :func:`export_gpkg` wendet den komponierten
+   :class:`~pbs_gis.georef.SimilarityTransform` je Blatt auf Leitung und
+   Signatur an und schreibt einen GeoPackage-Layer je Klasse, je Zug mit
+   Blatt und Lageklasse (eigener Anker vs. nur verkettet).
 
 Referenz (Mechanismus 6) kommt aus der bestehenden WFS-Schicht — kein eigener
 Weg in diesem Paket. Der Layer-Alias eines MEHRLAYER-Rezepts wird über
@@ -96,6 +97,7 @@ from pbs_gis.einpassung.blattverbund import (
     verify_chaining,
     vertices,
 )
+from pbs_gis.einpassung.export import LAGEKLASSEN, export_gpkg
 from pbs_gis.einpassung.fit import (
     ChamferField,
     CoarseFit,
@@ -179,4 +181,7 @@ __all__ = [
     "reference_rings",
     "resample",
     "sample_rings",
+    # Export
+    "LAGEKLASSEN",
+    "export_gpkg",
 ]
