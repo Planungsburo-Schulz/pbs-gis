@@ -550,7 +550,7 @@ def sheet_cut_rectangles(
     source,
     page: int = 1,
     *,
-    rect_stroke: str = "0%, 0%, 100%",
+    rect_stroke: str = "rgb(0%, 0%, 100%)",
     label_pattern: str = r"(\d+)/(\d+)",
     page_size_pt: tuple[float, float] = DEFAULT_PAGE_SIZE_PT,
     min_points: int = 4,
@@ -570,8 +570,11 @@ def sheet_cut_rectangles(
     Args:
         source: PDF (oder SVG) des Plans.
         page: Seite des Übersichtsblatts.
-        rect_stroke: Farb-Teilstring der Rechtecke; an der Telekom-Vorlage
-            sind sie blau (``rgb(0%, 0%, 100%)``).
+        rect_stroke: Strichfarbe der Rechtecke, GENAU mit dem
+            ``stroke``-Attribut verglichen, wie ``pdftocairo`` es schreibt;
+            an der Telekom-Vorlage blau (``rgb(0%, 0%, 100%)``). Kein
+            Teilstring: ``0%, 0%, 100%`` steckt auch in ``rgb(50%, 0%, 100%)``,
+            und ein fremdes Rechteck sagt eine Blattlage falsch vorher.
         label_pattern: Regex, dem ein Seitenlabel als Ganzes entsprechen muss;
             Gruppe 1 ist die Blattnummer. Default ``(\\d+)/(\\d+)`` trifft
             „3/9" — die Beschriftung der gemessenen Vorlage.
@@ -602,7 +605,7 @@ def sheet_cut_rectangles(
                            min_points=min_points)
     rects_all = []
     for i, p in enumerate(paths):
-        if rect_stroke not in p.stroke:
+        if p.stroke != rect_stroke:
             continue
         fail_bei_fremdkommando(p, page, i)
         X, Y = p.points[:, 0], p.points[:, 1]

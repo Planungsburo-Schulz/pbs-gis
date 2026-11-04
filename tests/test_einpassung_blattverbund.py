@@ -304,6 +304,22 @@ def test_blattschnitt_findet_rechtecke_und_ordnet_labels_zu(overview_pdf):
         assert np.allclose(cut.rects[p], soll, atol=1.0)
 
 
+def test_rahmenfarbe_gilt_exakt_nicht_als_teilstring(tmp_path):
+    """Instrumenten-Paar: ein violettes Rechteck ``rgb(50%, 0%, 100%)`` trägt
+    das Blau ``0%, 0%, 100%`` als Teilstring — es ist kein Blattschnitt."""
+    content = "".join(
+        synthplan.rectangle(*r) + synthplan.text((r[0] + r[2]) / 2 - 10,
+                                                 (r[1] + r[3]) / 2, f"{p}/9")
+        for p, r in RECTS.items())
+    content += synthplan.rectangle(600, 400, 800, 540, rgb=(0.5, 0, 1))
+    pdf = synthplan.write_pdf(tmp_path / "violett.pdf", [content])
+    cut = sheet_cut_rectangles(pdf, 1)
+    assert cut.n_rects == 3
+    assert sorted(cut.rects) == [2, 3, 4]
+    with pytest.raises(EinpassungError, match="kein Pfad mit Rahmenfarbe"):
+        sheet_cut_rectangles(pdf, 1, rect_stroke="0%, 0%, 100%")
+
+
 def test_blattschnitt_wirft_ohne_rechtecke(tmp_path):
     pdf = synthplan.write_pdf(tmp_path / "ohne.pdf",
                               [synthplan.polyline([(100, 100), (500, 100)], dash=DASH)
