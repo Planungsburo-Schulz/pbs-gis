@@ -240,10 +240,14 @@ def sheet_mosaic(
         reference: Blatt, dessen Ursprung auf (0, 0) gesetzt wird; Default das
             kleinstnummerierte.
         anchor_weight: Gewicht der Verankerungsgleichung.
-        pinned: Blatt -> Ursprung für Blätter OHNE Kantenweg zum
-            Referenzblatt, in der Konvention von ``Mosaic.origins``. Eine
-            Lage aus :func:`predict_positions` / :func:`pin_positions` ist
-            ``Lage_p = -U_p``, gepinnt wird also ``-Lage_p``.
+        pinned: Blatt -> Lage für Blätter OHNE Kantenweg zum Referenzblatt,
+            in der Konvention, die :func:`pin_positions` /
+            :func:`predict_positions` liefern: ``Lage_p = -U_p``. Der Wert
+            geht unverändert hinein; ``Mosaic.origins`` trägt danach
+            ``-Lage_p``. Die Lage muss sich auf das Referenzblatt beziehen
+            (``Lage_ref = 0``), wie bei ``measured = {p: -mos.origins[p]}``;
+            eine Lage im Übersichtsrahmen (:func:`chain_over_overview`)
+            trägt die Lage des Referenzblatts als Versatz mit.
 
     Raises:
         EinpassungError: kein einziges Blattpaar überlappt — dann gibt es
@@ -281,7 +285,8 @@ def sheet_mosaic(
                 if x == a and y not in verbund:
                     verbund.add(y)
                     todo.append(y)
-    pins = {int(p): np.asarray(v, float).reshape(2) for p, v in (pinned or {}).items()}
+    # pinned trägt Lagen (Lage_p = -U_p), placed trägt Ursprünge U_p.
+    pins = {int(p): -np.asarray(v, float).reshape(2) for p, v in (pinned or {}).items()}
     fremd = sorted(p for p in pins if p not in sheet_vertices)
     if fremd:
         raise EinpassungError(

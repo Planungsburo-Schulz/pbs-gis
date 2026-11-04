@@ -37,8 +37,11 @@ sheets = {p: sheet_vectors(PDF, p) for p in range(2, 10)}
 verts  = {p: vertices(sv.kataster + sv.leitung, sv.frame) for p, sv in sheets.items()}
 
 # 2 Blattpaare mit direktem Überlapp — ein Blatt ohne Kantenweg zum
-#   Referenzblatt steht in mos.unplaced, nicht in mos.origins; seine Lage kommt
-#   aus dem Blattschnitt (Schritt 4) als sheet_mosaic(..., pinned={p: -lage})
+#   Referenzblatt steht in mos.unplaced, nicht in mos.origins; seine Lage aus
+#   dem Blattschnitt (Schritt 4) geht unverändert hinein:
+#   sheet_mosaic(..., pinned={p: lagen[p]}), danach mos.origins[p] == -lagen[p].
+#   Die Lage bezieht sich auf das Referenzblatt (Lage_ref = 0); eine Lage im
+#   Übersichtsrahmen (ch.positions) trägt die Lage des Referenzblatts als Versatz mit.
 mos = sheet_mosaic(verts, reference=2)
 
 # 3 Verkettung über das Übersichtsblatt + PFLICHT-PROBE

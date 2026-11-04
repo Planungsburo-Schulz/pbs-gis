@@ -151,12 +151,34 @@ def test_blatt_ohne_kantenweg_bekommt_keine_lage():
 
 
 def test_gepinntes_blatt_liegt_am_pin_und_ist_ausgewiesen():
-    pin = np.array([-512.3, 7.5])
-    mos = sheet_mosaic(_verbund_mit_insel(), reference=2, pinned={4: pin})
-    assert np.allclose(mos.origins[4], pin)
+    lage = np.array([-512.3, 7.5])
+    mos = sheet_mosaic(_verbund_mit_insel(), reference=2, pinned={4: lage})
+    assert np.allclose(mos.origins[4], -lage)
     assert mos.pinned == (4,)
     assert mos.unplaced == ()
     assert np.allclose(mos.origins[3], [-40.0, 10.0], atol=0.1)
+
+
+def _pin_lage_der_insel(lage4):
+    """Lage von Blatt 4 so, wie pin_positions sie liefert (Bezug Referenzblatt 2)."""
+    frei = sheet_mosaic(_verbund_mit_insel(), reference=2)
+    gemessen = {p: -frei.origins[p] for p in frei.origins}
+    lagen, log = pin_positions(gemessen, {4: lage4})
+    assert [(p.page, p.reason) for p in log] == [(4, "keine Messung")]
+    return lagen[4]
+
+
+def test_pin_positions_wert_unveraendert_gepinnt_liegt_an_seiner_lage():
+    """Instrumenten-Paar zur Pin-Konvention: der Wert aus pin_positions geht
+    unverändert in pinned, und das Blatt liegt dort, wo pin_positions es sagt.
+    Die alte, vom Aufrufer negierte Form liegt seitdem gespiegelt daneben."""
+    lage4 = np.array([-518.813, 11.524])
+    pin = _pin_lage_der_insel(lage4)
+    mos = sheet_mosaic(_verbund_mit_insel(), reference=2, pinned={4: pin})
+    assert np.allclose(-mos.origins[4], lage4)
+    negiert = sheet_mosaic(_verbund_mit_insel(), reference=2, pinned={4: -pin})
+    assert np.allclose(-negiert.origins[4], -lage4)
+    assert not np.allclose(-negiert.origins[4], lage4)
 
 
 def test_verbundene_blaetter_unberuehrt_von_der_insel():
