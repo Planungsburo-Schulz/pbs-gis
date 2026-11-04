@@ -126,6 +126,72 @@ def test_sheet_mosaic_wirft_bei_einem_blatt():
         sheet_mosaic({2: _world()})
 
 
+def _verbund_mit_insel():
+    """Blätter 2–3 überlappen; Blatt 4 zeichnet nichts Gemeinsames mit ihnen."""
+    W = _world()
+    verts = {2: W, 3: W[5:] + np.array([40.0, -10.0]),
+             4: _world(seed=8) + np.array([600.0, 600.0])}
+    return verts
+
+
+def test_blatt_ohne_kantenweg_bekommt_keine_lage():
+    """Ohne Kante zum Referenzblatt hat ein Blatt KEINE Lage — nicht den Ursprung.
+
+    Die Minimum-Norm-Lösung setzte es still auf (0, 0); dort sieht es aus wie
+    eine Messung (E.DIS 1945942, Blatt 4: 518,6 m neben dem Rechteck).
+    """
+    mos = sheet_mosaic(_verbund_mit_insel(), reference=2)
+    assert mos.unplaced == (4,)
+    assert 4 not in mos.origins
+    assert sorted(mos.origins) == [2, 3]
+    with pytest.raises(EinpassungError, match="Blatt 4 .*pin_positions"):
+        mos.origins[4]
+    with pytest.raises(EinpassungError, match="Blatt 4 .*pin_positions"):
+        mos.origins.get(4)
+
+
+def test_gepinntes_blatt_liegt_am_pin_und_ist_ausgewiesen():
+    pin = np.array([-512.3, 7.5])
+    mos = sheet_mosaic(_verbund_mit_insel(), reference=2, pinned={4: pin})
+    assert np.allclose(mos.origins[4], pin)
+    assert mos.pinned == (4,)
+    assert mos.unplaced == ()
+    assert np.allclose(mos.origins[3], [-40.0, 10.0], atol=0.1)
+
+
+def test_verbundene_blaetter_unberuehrt_von_der_insel():
+    """Die Lagen des Verbunds hängen nicht davon ab, ob die Insel gepinnt ist."""
+    frei = sheet_mosaic(_verbund_mit_insel(), reference=2)
+    gepinnt = sheet_mosaic(_verbund_mit_insel(), reference=2, pinned={4: np.zeros(2)})
+    for p in (2, 3):
+        assert np.allclose(frei.origins[p], gepinnt.origins[p], rtol=0, atol=1e-9)
+
+
+def test_telekom_form_nur_kanten_ohne_referenzweg_laeuft_durch():
+    """Referenzblatt ohne Kante, Kanten nur zwischen anderen Blättern (Telekom 3–4).
+
+    Der Aufruf dient dort nur ``verify_chaining(…, mos.edges)``; er läuft
+    durch, und kein Blatt außer dem Referenzblatt bekommt eine Lage.
+    """
+    W = _world()
+    verts = {2: _world(seed=9) + np.array([900.0, 900.0]),
+             3: W, 4: W[5:] + np.array([40.0, -10.0])}
+    mos = sheet_mosaic(verts, reference=2)
+    assert [(e.a, e.b) for e in mos.edges] == [(3, 4)]
+    assert mos.unplaced == (3, 4)
+    assert sorted(mos.origins) == [2]
+
+
+def test_pin_auf_verbundenem_blatt_wirft():
+    with pytest.raises(EinpassungError, match="Blatt 3, .*Kante"):
+        sheet_mosaic(_verbund_mit_insel(), reference=2, pinned={3: np.zeros(2)})
+
+
+def test_pin_auf_unbekanntem_blatt_wirft():
+    with pytest.raises(EinpassungError, match="Blatt 9"):
+        sheet_mosaic(_verbund_mit_insel(), reference=2, pinned={9: np.zeros(2)})
+
+
 # --- Mechanismus 3: Verkettung über das Übersichtsblatt --------------------
 
 def _chaining_case(s=0.75):

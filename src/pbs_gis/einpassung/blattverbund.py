@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -159,14 +160,52 @@ class MosaicEdge:
     second: int
 
 
+class _Origins(dict):
+    """Blattursprünge, die ein Blatt OHNE Lage laut ablehnen.
+
+    Ein unverbundenes, ungepinntes Blatt fehlt im Mapping; wer seine Lage
+    trotzdem liest, bekommt die Begründung statt eines nackten ``KeyError`` —
+    und nie einen Ersatzwert, der wie eine Messung aussähe.
+    """
+
+    def __init__(self, data, unplaced):
+        super().__init__(data)
+        self._unplaced = tuple(unplaced)
+
+    def _ablehnen(self, page):
+        raise EinpassungError(
+            f"Blatt {page} hat keine Lage: kein Weg über akzeptierte Kanten "
+            "zum Referenzblatt und kein Pin. Lage aus dem Blattschnitt-Rechteck "
+            "(predict_positions / pin_positions) holen und an sheet_mosaic "
+            "als pinned übergeben.")
+
+    def __getitem__(self, page):
+        if page in self._unplaced:
+            self._ablehnen(page)
+        return super().__getitem__(page)
+
+    def get(self, page, default=None):
+        if page in self._unplaced:
+            self._ablehnen(page)
+        return super().get(page, default)
+
+
 @dataclass
 class Mosaic:
-    """Blattursprünge relativ zu einem Referenzblatt, plus die Kanten dahinter."""
+    """Blattursprünge relativ zu einem Referenzblatt, plus die Kanten dahinter.
+
+    ``origins`` trägt nur Blätter MIT Lage: das Referenzblatt, alle über
+    akzeptierte Kanten mit ihm verbundenen und die gepinnten. Ein Blatt
+    ohne beides steht in ``unplaced`` und fehlt in ``origins``; sein Lesen
+    dort wirft. ``pinned`` nennt die Blätter, deren Ursprung ein Pin ist.
+    """
 
     origins: dict[int, np.ndarray]
     edges: list[MosaicEdge]
     reference: int
     residuals: dict[tuple[int, int], float] = field(default_factory=dict)
+    unplaced: tuple[int, ...] = ()
+    pinned: tuple[int, ...] = ()
 
     @property
     def max_residual(self) -> float:
@@ -181,6 +220,7 @@ def sheet_mosaic(
     min_votes: int = 10,
     vote_concentration: float = 2.0,
     anchor_weight: float = 100.0,
+    pinned: Mapping[int, np.ndarray] | None = None,
 ) -> Mosaic:
     """Alle Blattpaare registrieren und die Ursprünge im Ausgleich lösen.
 
@@ -190,15 +230,27 @@ def sheet_mosaic(
     ``Ursprung_a - Ursprung_b`` — derselbe Weltpunkt erfüllt
     ``U_a + v_a = U_b + v_b``.
 
+    Gelöst wird nur über die Zusammenhangskomponente des Referenzblatts: ein
+    Blatt ohne Kantenweg dorthin ist durch keine Gleichung bestimmt, und die
+    Minimum-Norm-Lösung setzte es still auf (0, 0). Ein solches Blatt bekommt
+    seine Lage nur über ``pinned``; sonst steht es in ``Mosaic.unplaced``.
+
     Args:
         sheet_vertices: Blattnummer -> rahmenbereinigte Stützpunkte.
         reference: Blatt, dessen Ursprung auf (0, 0) gesetzt wird; Default das
             kleinstnummerierte.
         anchor_weight: Gewicht der Verankerungsgleichung.
+        pinned: Blatt -> Ursprung für Blätter OHNE Kantenweg zum
+            Referenzblatt, in der Konvention von ``Mosaic.origins``. Eine
+            Lage aus :func:`predict_positions` / :func:`pin_positions` ist
+            ``Lage_p = -U_p``, gepinnt wird also ``-Lage_p``.
 
     Raises:
         EinpassungError: kein einziges Blattpaar überlappt — dann gibt es
-            keinen Blattverbund, und ein Ergebnis wäre erfunden.
+            keinen Blattverbund, und ein Ergebnis wäre erfunden. Ebenso: ein
+            Pin auf einem Blatt, das nicht in der Eingabe ist oder schon über
+            Kanten mit dem Referenzblatt verbunden ist (zwei Lagen für ein
+            Blatt).
     """
     pages = sorted(sheet_vertices)
     if len(pages) < 2:
@@ -221,26 +273,54 @@ def sheet_mosaic(
             "die Blätter überlappen nicht (oder die Vektorextraktion hat die "
             "falsche Linienpopulation geliefert). Es gibt keinen Blattverbund.")
 
-    idx = {p: k for k, p in enumerate(pages)}
+    verbund, todo = {ref}, [ref]
+    while todo:
+        a = todo.pop()
+        for e in edges:
+            for x, y in ((e.a, e.b), (e.b, e.a)):
+                if x == a and y not in verbund:
+                    verbund.add(y)
+                    todo.append(y)
+    pins = {int(p): np.asarray(v, float).reshape(2) for p, v in (pinned or {}).items()}
+    fremd = sorted(p for p in pins if p not in sheet_vertices)
+    if fremd:
+        raise EinpassungError(
+            f"Pin auf Blatt {', '.join(map(str, fremd))} — nicht in der Eingabe "
+            f"(Blätter {pages}).")
+    doppelt = sorted(p for p in pins if p in verbund)
+    if doppelt:
+        raise EinpassungError(
+            f"Pin auf Blatt {', '.join(map(str, doppelt))}, das über akzeptierte "
+            f"Kante(n) mit dem Referenzblatt {ref} verbunden ist — zwei Lagen für "
+            "ein Blatt; gepinnt wird nur ein Blatt ohne Kantenweg.")
+
+    comp = [p for p in pages if p in verbund]
+    idx = {p: k for k, p in enumerate(comp)}
     A, rhs, w = [], [], []
     for e in edges:
-        row = np.zeros(len(pages))
+        if e.a not in idx:
+            continue
+        row = np.zeros(len(comp))
         row[idx[e.b]] = 1.0
         row[idx[e.a]] = -1.0
         A.append(row)
         rhs.append(e.offset)
         w.append(e.votes ** 0.5)
-    A.append(np.eye(len(pages))[idx[ref]])
+    A.append(np.eye(len(comp))[idx[ref]])
     rhs.append(np.zeros(2))
     w.append(anchor_weight)
     Aw = np.asarray(A) * np.asarray(w)[:, None]
     Rw = np.asarray(rhs) * np.asarray(w)[:, None]
     sol, *_ = np.linalg.lstsq(Aw, Rw, rcond=None)
-    origins = {p: -sol[idx[p]] for p in pages}
+    placed = {p: -sol[idx[p]] for p in comp}
+    placed.update(pins)
+    unplaced = tuple(p for p in pages if p not in placed)
 
-    residuals = {(e.a, e.b): float(np.hypot(*(origins[e.a] - origins[e.b] - e.offset)))
-                 for e in edges}
-    return Mosaic(origins=origins, edges=edges, reference=ref, residuals=residuals)
+    residuals = {(e.a, e.b): float(np.hypot(*(placed[e.a] - placed[e.b] - e.offset)))
+                 for e in edges if e.a in placed and e.b in placed}
+    return Mosaic(origins=_Origins({p: placed[p] for p in pages if p in placed}, unplaced),
+                  edges=edges, reference=ref, residuals=residuals, unplaced=unplaced,
+                  pinned=tuple(sorted(pins)))
 
 
 def overview_vertices(
