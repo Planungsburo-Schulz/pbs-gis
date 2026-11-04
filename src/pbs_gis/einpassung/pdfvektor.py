@@ -40,7 +40,7 @@ from __future__ import annotations
 import re
 import subprocess
 import xml.etree.ElementTree as ET
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -419,7 +419,7 @@ def sheet_vectors(
     page_size_pt: tuple[float, float] = DEFAULT_PAGE_SIZE_PT,
     frame_inset_pt: float = DEFAULT_FRAME_INSET_PT,
     frame_tol_m: float = 0.35,
-    classes: Mapping[str, StrokeClass] | None = None,
+    classes: Mapping[str, StrokeClass | Sequence[StrokeClass]] | None = None,
 ) -> SheetVectors:
     """Katastersignatur und Leitung EINES Blatts trennen, in Bodenmetern.
 
@@ -438,19 +438,23 @@ def sheet_vectors(
         page_size_pt: Blattformat in pt (Default A3 quer).
         frame_inset_pt: Abstand der Kartenrahmenlinie von der Blattkante.
         frame_tol_m: Fangbreite des Rahmens in Metern.
-        classes: Klassen-Modus — Klassenname -> :class:`StrokeClass`. Ein
-            Pfad gehört zu der Klasse, deren Farbe er exakt trägt und deren
-            Stärke er innerhalb ``tol`` trifft; ``stroke_width_pt``,
+        classes: Klassen-Modus — Klassenname -> :class:`StrokeClass` oder
+            eine Folge davon (eine Sparte, die der Plan in zwei Farben oder
+            Stärken zeichnet, ist EINE Klasse mit zwei Signaturen). Ein Pfad
+            gehört zu der Klasse, deren Signatur er trifft: Farbe exakt,
+            Stärke innerhalb ``tol``; ``stroke_width_pt``,
             ``stroke_width_tol`` und ``exclude_stroke`` wirken dann nicht.
-            Der Schlüssel ``"kataster"`` ist Pflicht.
+            Der Schlüssel ``"kataster"`` ist Pflicht; ``stroke_width_pt`` des
+            Ergebnisses ist die Stärke seiner ersten Signatur.
 
     Raises:
         EinpassungError: das Blatt trägt keinen Pfad der tragenden
             Strichstärke (im Klassen-Modus: keinen der Klasse
             ``"kataster"``) — dann ist entweder die Auswahl falsch geraten
             oder das Blatt trägt die Population nicht. Im Klassen-Modus
-            außerdem: ``"kataster"`` fehlt, ein Pfad passt auf zwei Klassen,
-            oder zugleich ist ein abweichendes ``dasharray`` gesetzt. Eine
+            außerdem: ``"kataster"`` fehlt, eine Klasse hat keine Signatur,
+            ein Pfad passt auf zwei Klassen, oder zugleich ist ein
+            abweichendes ``dasharray`` gesetzt. Eine
             LEERE Sparten-Klasse wirft nicht — ein Blatt ohne Leitung ist
             eine Fehlanzeige, kein Lesefehler.
     """
@@ -464,6 +468,14 @@ def sheet_vectors(
                 f"classes und dasharray={dasharray!r} zugleich — zwei Auswahl-"
                 "Modi in einem Aufruf; der Klassen-Modus wählt nicht über das "
                 "Strichmuster.")
+        signaturen = {name: (c,) if isinstance(c, StrokeClass) else tuple(c)
+                      for name, c in classes.items()}
+        leer = sorted(name for name, sig in signaturen.items() if not sig)
+        if leer:
+            raise EinpassungError(
+                "classes: " + ", ".join(repr(n) for n in leer) + " trägt keine "
+                "Signatur — eine Klasse ohne StrokeClass wählt nie einen Pfad und "
+                "sähe aus wie ein Blatt ohne diese Sparte.")
     paths = read_svg_paths(source, page, page_height_pt=page_size_pt[1])
     k = m_per_pt(scale)
     frame = sheet_frame(page_size_pt=page_size_pt, inset_pt=frame_inset_pt,
@@ -472,7 +484,8 @@ def sheet_vectors(
     if classes is not None:
         by_class: dict[str, list[np.ndarray]] = {name: [] for name in classes}
         for i, p in enumerate(paths):
-            hits = [name for name, c in classes.items() if c.matches(p)]
+            hits = [name for name, sig in signaturen.items()
+                    if any(c.matches(p) for c in sig)]
             if not hits:
                 continue
             if len(hits) > 1:
@@ -483,17 +496,17 @@ def sheet_vectors(
                     + " — die Klassen überlappen in Farbe und Stärke-Toleranz.")
             fail_bei_fremdkommando(p, page, i)
             by_class[hits[0]].append(p.points * k)
-        kat = classes["kataster"]
+        kat = signaturen["kataster"]
         if not by_class["kataster"]:
             raise EinpassungError(
-                f"Seite {page}: kein Pfad der Klasse 'kataster' ({kat.stroke}, "
-                f"{kat.width_pt} pt ±{kat.tol}). Farbe und Stärke am Blatt messen "
-                "(read_svg_paths) statt raten.")
+                f"Seite {page}: kein Pfad der Klasse 'kataster' ("
+                + "; ".join(f"{c.stroke}, {c.width_pt} pt ±{c.tol}" for c in kat)
+                + "). Farbe und Stärke am Blatt messen (read_svg_paths) statt raten.")
         return SheetVectors(
             page=page, kataster=by_class["kataster"],
             leitung=[c for name, chains in by_class.items() if name != "kataster"
                      for c in chains],
-            stroke_width_pt=float(kat.width_pt), dasharray="", frame=frame,
+            stroke_width_pt=float(kat[0].width_pt), dasharray="", frame=frame,
             scale=scale, classes=by_class)
 
     if stroke_width_pt is None:

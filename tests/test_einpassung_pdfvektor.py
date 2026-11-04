@@ -412,3 +412,26 @@ def test_leere_spartenklasse_ist_eine_legitime_fehlanzeige(farbplan):
     klassen = dict(KLASSEN, fm=StrokeClass("rgb(94%, 45%, 93%)", 0.992))
     sv = sheet_vectors(farbplan, 1, classes=klassen)
     assert sv.classes["fm"] == []
+
+
+def test_eine_klasse_mit_zwei_signaturen(tmp_path):
+    """Eine Sparte aus zwei Farben/Stärken ist EINE Klasse (NS: blau + hellblau)."""
+    content = (
+        synthplan.polyline([(100, 100), (300, 100)], width=1.02)                         # Kataster
+        + synthplan.polyline([(400, 300), (700, 300)], width=0.992, rgb=(0, 0, 1))        # NS blau 300 pt
+        + synthplan.polyline([(400, 500), (500, 500)], width=0.709, rgb=(0.2, 0.35, 1))   # NS hell 100 pt
+        + synthplan.polyline([(400, 700), (450, 700)], width=0.992, rgb=(0.2, 0.35, 1))   # Beiwerk
+    )
+    pdf = _plan(tmp_path, content, name="zwei_signaturen.pdf")
+    hell = next(p.stroke for p in read_svg_paths(pdf, 1) if p.stroke_width_pt == 0.709)
+    klassen = {"kataster": KLASSEN["kataster"],
+               "nsp": (StrokeClass(BLAU, 0.992), StrokeClass(hell, 0.709))}
+    sv = sheet_vectors(pdf, 1, classes=klassen)
+    assert len(sv.classes["nsp"]) == 2
+    assert _laenge(sv.classes["nsp"]) == pytest.approx(400 * m_per_pt(500), rel=REL_TOL)
+    assert sv.leitung_length_m == pytest.approx(400 * m_per_pt(500), rel=REL_TOL)
+
+
+def test_leere_signaturfolge_wirft(farbplan):
+    with pytest.raises(EinpassungError, match="'nsp'.*keine Signatur"):
+        sheet_vectors(farbplan, 1, classes=dict(KLASSEN, nsp=()))
