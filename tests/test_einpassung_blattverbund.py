@@ -231,6 +231,84 @@ def test_blattschnitt_wirft_ohne_seitenlabel(tmp_path):
         sheet_cut_rectangles(pdf, 1)
 
 
+def test_blattschnitt_eindeutige_labels_bleiben_unveraendert(overview_pdf):
+    """Neutralitätsprobe: ohne Doppeltreffer liest sich der Blattschnitt wie zuvor."""
+    cut = sheet_cut_rectangles(overview_pdf, 1)
+    assert cut.n_rects == 3
+    assert sorted(cut.labels) == [2, 3, 4]
+    for p, r in RECTS.items():
+        lx, ly = cut.labels[p]
+        assert r[0] <= lx <= r[2] and r[1] <= ly <= r[3]
+
+
+def test_blattschnitt_doppeltes_label_wirft(tmp_path):
+    """Ein zweites „3/9" überschrieb die erste Fundstelle still — jetzt laut."""
+    content = "".join(
+        synthplan.rectangle(*r) + synthplan.text((r[0] + r[2]) / 2 - 10,
+                                                 (r[1] + r[3]) / 2, f"{p}/9")
+        for p, r in RECTS.items())
+    content += synthplan.text(150, 300, "3/9")       # zweite Fundstelle in Rechteck 4
+    pdf = synthplan.write_pdf(tmp_path / "doppelt.pdf", [content])
+    with pytest.raises(EinpassungError, match="Label 3 .*2 Fundstellen"):
+        sheet_cut_rectangles(pdf, 1)
+
+
+def _ziffern_index(tmp_path, *, hausnummer=True):
+    """Große Blattziffern + kleine Hausnummer gleicher Ziffer, wie im E.DIS-Index."""
+    content = "".join(
+        synthplan.rectangle(*r) + synthplan.text(r[0] + 4, r[1] + 4, f"{p}", size=40)
+        for p, r in RECTS.items())
+    if hausnummer:
+        content += synthplan.text(420, 200, "2", size=8)
+    return synthplan.write_pdf(tmp_path / "ziffern.pdf", [content])
+
+
+def test_glyphenhoehe_trennt_blattziffer_von_hausnummer(tmp_path):
+    """Instrumenten-Paar: ohne Höhenfilter ist die Hausnummer ein Doppeltreffer."""
+    pdf = _ziffern_index(tmp_path)
+    with pytest.raises(EinpassungError, match="Label 2 "):
+        sheet_cut_rectangles(pdf, 1, label_pattern=r"(\d)")
+    cut = sheet_cut_rectangles(pdf, 1, label_pattern=r"(\d)", min_label_height_pt=20.0)
+    assert sorted(cut.rects) == [2, 3, 4]
+    for p, soll in RECTS.items():
+        assert np.allclose(cut.rects[p], soll, atol=1.0)
+
+
+# Rechteck 2 ist etwas kleiner: die Ziffer 3 im Überlappstreifen liegt in
+# beiden, und „kleinstes enthaltendes Rechteck" wählt dann Rechteck 2. Bei
+# gleich großen Rechtecken entschiede das Gleitkomma-Rauschen der
+# SVG-Konvertierung — die Probe hinge an einem Zufall.
+UEBERLAPP = {2: (100.0, 100.0, 300.0, 230.0),
+             3: (250.0, 100.0, 450.0, 240.0)}      # Überlappstreifen x 250–300
+
+
+@pytest.fixture
+def ueberlapp_pdf(tmp_path):
+    """Rechtecke mit Überlapp; jede Ziffer in der linken unteren Ecke ihres Rechtecks."""
+    content = "".join(
+        synthplan.rectangle(*r) + synthplan.text(r[0] + 4, r[1] + 4, f"{p}", size=40)
+        for p, r in UEBERLAPP.items())
+    return synthplan.write_pdf(tmp_path / "ueberlapp.pdf", [content])
+
+
+def test_mittelpunkt_im_ueberlappstreifen_wirft_statt_still_zu_waehlen(ueberlapp_pdf):
+    """Ziffer 3 liegt im Streifen und damit in beiden Rechtecken — eines wird doppelt belegt."""
+    with pytest.raises(EinpassungError, match="mehrfach belegt"):
+        sheet_cut_rectangles(ueberlapp_pdf, 1, label_pattern=r"(\d)")
+
+
+def test_anker_linke_untere_ecke_ordnet_im_ueberlapp_eindeutig_zu(ueberlapp_pdf):
+    cut = sheet_cut_rectangles(ueberlapp_pdf, 1, label_pattern=r"(\d)",
+                               anchor="lower_left")
+    for p, soll in UEBERLAPP.items():
+        assert np.allclose(cut.rects[p], soll, atol=1.0)
+
+
+def test_unbekannter_anker_wirft(overview_pdf):
+    with pytest.raises(EinpassungError, match="anchor"):
+        sheet_cut_rectangles(overview_pdf, 1, anchor="mitte")
+
+
 def test_rechteck_vorhersage_reproduziert_die_gemessenen_lagen(overview_pdf):
     """Positivprobe: die Rechtecke sagen die Lagen unabhängig vorher."""
     cut = sheet_cut_rectangles(overview_pdf, 1)

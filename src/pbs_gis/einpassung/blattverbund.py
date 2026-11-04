@@ -33,6 +33,7 @@ import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 
@@ -468,11 +469,18 @@ def sheet_cut_rectangles(
     label_pattern: str = r"(\d+)/(\d+)",
     page_size_pt: tuple[float, float] = DEFAULT_PAGE_SIZE_PT,
     min_points: int = 4,
+    min_label_height_pt: float | None = None,
+    anchor: Literal["center", "lower_left"] = "center",
 ) -> SheetCut:
     """Blattschnitt-Rechtecke und ihre Seitenlabel vom Übersichtsblatt lesen.
 
     Die Rechtecke sind das stärkste unabhängige Instrument des Verfahrens:
     sie sagen jede Blattlage vorher, OHNE die Hough-Abstimmung zu benutzen.
+
+    Die Zuordnung Label ↔ Rechteck ist eineindeutig oder sie wirft: ein
+    Label mit zwei Fundstellen oder ein Rechteck, das zwei Labels für sich
+    beanspruchen, hat keine richtige Lesart, und jede still gewählte sagt
+    eine Blattlage aus dem falschen Rechteck vorher.
 
     Args:
         source: PDF (oder SVG) des Plans.
@@ -483,12 +491,27 @@ def sheet_cut_rectangles(
             Gruppe 1 ist die Blattnummer. Default ``(\\d+)/(\\d+)`` trifft
             „3/9" — die Beschriftung der gemessenen Vorlage.
         min_points: Stützpunkte, ab denen ein Pfad als Rechteck gilt.
+        min_label_height_pt: nur Wörter mit mindestens dieser Glyphenhöhe
+            (Höhe der ``pdftotext``-Wortbox) zählen als Label. Trennt große
+            Blattziffern von gleichlautenden kleinen Beschriftungen
+            (Hausnummern); ``None`` filtert nicht.
+        anchor: Zuordnungsregel. ``"center"``: das kleinste Rechteck, das den
+            Label-Mittelpunkt enthält. ``"lower_left"``: das Rechteck, dessen
+            linke untere Ecke der linken unteren Ecke des Labels am nächsten
+            liegt — für Blattschnitte, deren Rechtecke in Streifen
+            überlappen und deren Label in der Rechteck-Ecke sitzt. In
+            ``labels`` steht dann die linke untere Label-Ecke.
 
     Raises:
         EinpassungError: kein Rechteck oder kein Label gefunden — dann trägt
             das Blatt keinen auswertbaren Blattschnitt, und die Gegenprobe
-            fehlt, statt still zu bestehen.
+            fehlt, statt still zu bestehen. Ebenso: ein Label mit mehreren
+            Fundstellen, ein Rechteck mit zwei Labels, ein unbekannter
+            ``anchor``.
     """
+    if anchor not in ("center", "lower_left"):
+        raise EinpassungError(
+            f"anchor={anchor!r} unbekannt — zulässig sind 'center' und 'lower_left'.")
     src = Path(source)
     paths = read_svg_paths(src, page, page_height_pt=page_size_pt[1],
                            min_points=min_points)
@@ -512,27 +535,57 @@ def sheet_cut_rectangles(
                           str(src), "-"], capture_output=True, text=True).stdout
     words = re.findall(r'<word xMin="([\d.]+)" yMin="([\d.]+)" xMax="([\d.]+)"'
                        r' yMax="([\d.]+)">([^<]+)</word>', xml)
-    labels: dict[int, tuple[float, float]] = {}
+    hits: dict[int, list[tuple[float, float]]] = {}
     pat = re.compile(label_pattern)
+    h = page_size_pt[1]
     for x0, y0, x1, y1, txt in words:
+        x0, y0, x1, y1 = map(float, (x0, y0, x1, y1))
+        if min_label_height_pt is not None and (y1 - y0) < min_label_height_pt:
+            continue
         m = pat.fullmatch(txt.strip())
         if m:
-            labels[int(m.group(1))] = ((float(x0) + float(x1)) / 2,
-                                       page_size_pt[1] - (float(y0) + float(y1)) / 2)
-    if not labels:
+            pos = ((x0 + x1) / 2, h - (y0 + y1) / 2) if anchor == "center" else (x0, h - y1)
+            hits.setdefault(int(m.group(1)), []).append(pos)
+    if not hits:
         raise EinpassungError(
             f"Seite {page}: kein Seitenlabel nach Muster {label_pattern!r} — die "
             "Rechtecke sind ohne Zuordnung wertlos.")
+    doppelt = {p: pos for p, pos in hits.items() if len(pos) > 1}
+    if doppelt:
+        raise EinpassungError(
+            f"Seite {page}: "
+            + "; ".join(f"Label {p} hat {len(pos)} Fundstellen "
+                        + ", ".join(f"({x:.1f}, {y:.1f})" for x, y in pos)
+                        for p, pos in sorted(doppelt.items()))
+            + " pt — welche das Blatt meint, ist nicht entscheidbar. "
+            "min_label_height_pt oder label_pattern enger fassen.")
+    labels = {p: pos[0] for p, pos in hits.items()}
 
     rects: dict[int, tuple[float, float, float, float]] = {}
-    for p, (cx, cy) in labels.items():
-        inside = [r for r in rects_all if r[0] <= cx <= r[2] and r[1] <= cy <= r[3]]
+    for p, (lx, ly) in labels.items():
+        if anchor == "lower_left":
+            rects[p] = min(rects_all, key=lambda r: np.hypot(r[0] - lx, r[1] - ly))
+            continue
+        inside = [r for r in rects_all if r[0] <= lx <= r[2] and r[1] <= ly <= r[3]]
         if inside:
             rects[p] = min(inside, key=lambda r: (r[2] - r[0]) * (r[3] - r[1]))
     if not rects:
         raise EinpassungError(
             "kein Seitenlabel liegt in einem Rechteck — Label und Blattschnitt "
             "gehören nicht zusammen.")
+    belegt: dict[tuple[float, float, float, float], list[int]] = {}
+    for p, r in rects.items():
+        belegt.setdefault(r, []).append(p)
+    mehrfach = {r: ps for r, ps in belegt.items() if len(ps) > 1}
+    if mehrfach:
+        raise EinpassungError(
+            f"Seite {page}: "
+            + "; ".join(f"Rechteck ({r[0]:.1f}, {r[1]:.1f}, {r[2]:.1f}, {r[3]:.1f}) "
+                        f"ist mehrfach belegt, von den Labels "
+                        + ", ".join(f"{p} bei ({labels[p][0]:.1f}, {labels[p][1]:.1f})"
+                                    for p in sorted(ps))
+                        for r, ps in mehrfach.items())
+            + f" pt — die Zuordnung (anchor={anchor!r}) ist nicht eineindeutig.")
     return SheetCut(rects=rects, n_rects=len(rects_all), labels=labels)
 
 
