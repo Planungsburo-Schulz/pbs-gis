@@ -129,6 +129,15 @@ def should_skip(step: dict, project_dir: Path) -> bool:
         return False
     oldest_output = min(p.stat().st_mtime for p in output_paths)
 
+    for inp in _declared_inputs(step):
+        if _newest_mtime(project_dir / inp) > oldest_output:
+            return False  # input changed — re-run
+
+    return True
+
+
+def _declared_inputs(step: dict) -> list[str]:
+    """The paths whose change makes an ``auto`` step stale (see :func:`should_skip`)."""
     declared_inputs = list(step.get("inputs", []))
     # A step depends on its own script (make-style: target depends on its recipe),
     # so editing the script re-runs the step and cascades downstream.
@@ -141,11 +150,41 @@ def should_skip(step: dict, project_dir: Path) -> bool:
     # An ops step reads one source layer via ``input:`` — count it as an input.
     if step.get("ops") is not None and step.get("input"):
         declared_inputs.append(step["input"])
-    for inp in declared_inputs:
-        if _newest_mtime(project_dir / inp) > oldest_output:
-            return False  # input changed — re-run
+    return declared_inputs
 
-    return True
+
+def _paths_overlap(a: Path, b: Path) -> bool:
+    """Same path, or one contains the other (a directory input sees its files)."""
+    return a == b or a in b.parents or b in a.parents
+
+
+def plan_runs(ordered: list[dict], project_dir: Path) -> dict[str, list[str]]:
+    """Which steps a real run would run, decided without running any.
+
+    A real run evaluates :func:`should_skip` only when a step's turn comes,
+    after the steps before it have rewritten their outputs — so a step whose
+    declared input is an upstream output re-runs because that output just got
+    newer. The plan reproduces that: a step runs on its own rule, OR when one
+    of its declared inputs is (or contains, or lies under) an output of a step
+    planned to run earlier in *ordered* — transitively, in workflow order.
+
+    Returns:
+        ``{step name: [upstream steps that make it run]}`` for every step that
+        runs; an empty list means it runs on its own rule. Steps that would be
+        skipped are absent.
+    """
+    planned: dict[str, list[str]] = {}
+    outputs_of: dict[str, list[Path]] = {}
+    for step in ordered:
+        name = step["name"]
+        inputs = [(project_dir / inp).resolve() for inp in _declared_inputs(step)]
+        upstream = [up for up, outs in outputs_of.items()
+                    if any(_paths_overlap(i, o) for i in inputs for o in outs)]
+        if upstream or not should_skip(step, project_dir):
+            planned[name] = upstream
+            outputs_of[name] = [(project_dir / out).resolve()
+                                for out in _collect_outputs(step)]
+    return planned
 
 
 def run_step(
@@ -410,16 +449,21 @@ def run_workflow(
     print(f"{'[DRY RUN] ' if dry_run else ''}Workflow: {project_name}")
     print(f"Steps: {len(ordered)}\n")
 
+    plan = plan_runs(ordered, project_dir) if dry_run else {}
+
     all_ok = True
     for i, step in enumerate(ordered, 1):
         name = step["name"]
         mode = step.get("run", "auto")
-        skip = should_skip(step, project_dir)
-
-        status = "SKIP (outputs exist)" if skip else mode
         prefix = f"[{i}/{len(ordered)}]"
 
         if dry_run:
+            if name not in plan:
+                status = "SKIP (outputs exist)"
+            elif plan[name]:
+                status = f"{mode} — input from: {', '.join(plan[name])}"
+            else:
+                status = mode
             deps = step.get("depends_on", [])
             dep_str = f" (after: {', '.join(deps)})" if deps else ""
             print(f"  {prefix} {name} [{status}]{dep_str}")
@@ -438,7 +482,7 @@ def run_workflow(
                 print(f"        → {detail}")
             continue
 
-        if skip:
+        if should_skip(step, project_dir):
             print(f"  {prefix} {name} — skipped (outputs exist)")
             continue
 

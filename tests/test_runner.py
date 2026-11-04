@@ -239,3 +239,126 @@ def test_resolve_extent_buffer_without_crs_raises(tmp_path):
 
 def test_resolve_extent_no_boundary_returns_empty(tmp_path):
     assert _resolve_extent({"name": "s"}, tmp_path) == {}
+
+
+# --------------------------------------------------------------------------
+# plan_runs / --dry-run — the plan shows what a real run would run
+# --------------------------------------------------------------------------
+
+def _schreib_skript(path, ausgabe, mtime):
+    """A step script that writes *ausgabe* (relative to the project) when run."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "from pathlib import Path\n"
+        f"p = Path({ausgabe!r}); p.parent.mkdir(parents=True, exist_ok=True)\n"
+        "p.write_text('neu', encoding='utf-8')\n", encoding="utf-8")
+    os.utime(path, (mtime, mtime))
+    return path
+
+
+def _zwei_schritte(tmp_path, *, a_veraltet=True, b_inputs=("Geodaten/a.txt",), dritter=False):
+    """A schreibt Geodaten/a.txt, B liest es und schreibt Geodaten/b.txt.
+
+    Mit ``a_veraltet`` ist A's Skript neuer als seine Ausgabe (A läuft nach
+    eigener Regel); B ist für sich frisch: Ausgabe neuer als Eingabe und Skript.
+    """
+    import yaml
+
+    _schreib_skript(tmp_path / "scripts" / "a.py", "Geodaten/a.txt",
+                    3000 if a_veraltet else 1000)
+    _touch(tmp_path / "Geodaten" / "a.txt", 2000)
+    _schreib_skript(tmp_path / "scripts" / "b.py", "Geodaten/b.txt", 1000)
+    _touch(tmp_path / "Geodaten" / "b.txt", 4000)
+    steps = [
+        {"name": "A", "script": "scripts/a.py", "output": "Geodaten/a.txt"},
+        {"name": "B", "script": "scripts/b.py", "inputs": list(b_inputs),
+         "output": "Geodaten/b.txt"},
+    ]
+    if dritter:
+        _schreib_skript(tmp_path / "scripts" / "c.py", "Geodaten/c.txt", 1000)
+        _touch(tmp_path / "Geodaten" / "c.txt", 5000)
+        steps.append({"name": "C", "script": "scripts/c.py",
+                      "inputs": ["Geodaten/b.txt"], "output": "Geodaten/c.txt"})
+    (tmp_path / "workflow.yaml").write_text(
+        yaml.safe_dump({"project": {"name": "t"}, "steps": steps}), encoding="utf-8")
+
+
+def _dry_run_status(tmp_path, capsys):
+    import re
+
+    from pbs_gis.runner import run_workflow
+
+    assert run_workflow(tmp_path, dry_run=True) is True
+    return dict(re.findall(r"\] (\S+) \[([^\]]+)\]", capsys.readouterr().out))
+
+
+def test_dry_run_zeigt_den_konsumenten_eines_laufenden_schritts_als_laufend(tmp_path, capsys):
+    """A läuft, B konsumiert A's Ausgabe und ist sonst frisch -> B läuft im Plan."""
+    _zwei_schritte(tmp_path)
+    status = _dry_run_status(tmp_path, capsys)
+    assert status["A"] == "auto"
+    assert status["B"] == "auto — input from: A"
+
+
+def test_dry_run_plan_stimmt_mit_dem_echten_lauf_ueberein(tmp_path, capsys):
+    """Gegenprobe am echten Lauf: B läuft dort tatsächlich, weil A's Ausgabe neu ist."""
+    from pbs_gis.runner import run_workflow
+
+    _zwei_schritte(tmp_path)
+    plan = _dry_run_status(tmp_path, capsys)
+    assert run_workflow(tmp_path) is True
+    lauf = capsys.readouterr().out
+    for name in ("A", "B"):
+        gelaufen = f"{name} — done" in lauf
+        assert gelaufen == (not plan[name].startswith("SKIP")), (name, plan[name])
+        assert gelaufen
+    assert (tmp_path / "Geodaten" / "b.txt").read_text(encoding="utf-8") == "neu"
+
+
+def test_dry_run_kaskade_ist_transitiv(tmp_path, capsys):
+    _zwei_schritte(tmp_path, dritter=True)
+    status = _dry_run_status(tmp_path, capsys)
+    assert status["C"] == "auto — input from: B"
+
+
+def test_dry_run_frischer_vorlaeufer_laesst_den_konsumenten_aus(tmp_path, capsys):
+    """Negativprobe: läuft A nicht, bleibt B übersprungen."""
+    _zwei_schritte(tmp_path, a_veraltet=False)
+    status = _dry_run_status(tmp_path, capsys)
+    assert status["A"] == "SKIP (outputs exist)"
+    assert status["B"] == "SKIP (outputs exist)"
+
+
+def test_dry_run_verzeichnis_eingabe_sieht_die_ausgabe_darin(tmp_path, capsys):
+    """Ein Verzeichnis als Eingabe enthält A's Ausgabe — der echte Lauf sähe sie."""
+    _zwei_schritte(tmp_path, b_inputs=("Geodaten",))
+    # b.txt liegt selbst in Geodaten/ und ist neuer als alles andere dort.
+    status = _dry_run_status(tmp_path, capsys)
+    assert status["B"] == "auto — input from: A"
+
+
+def test_params_aenderung_in_workflow_yaml_loest_keinen_neulauf_aus(tmp_path, capsys):
+    """Die Params eines Schritts sind keine Eingabe der Frische-Regel.
+
+    Ein geänderter ``layers:``-Eintrag in workflow.yaml (Datei neuer als die
+    Ausgabe) lässt einen frischen Schritt übersprungen — im echten Lauf wie im
+    Plan.
+    """
+    import yaml
+
+    from pbs_gis.runner import run_workflow
+
+    out = _touch(tmp_path / "Zeichnung" / "plan.dxf", 2000)
+    _touch(tmp_path / "Geodaten" / "g.gpkg", 1000)
+    step = {"name": "DXF", "template": "cad_export", "inputs": ["Geodaten/g.gpkg"],
+            "params": {"crs": "EPSG:25833", "styles": {}, "layers": [
+                {"source": "Geodaten/g.gpkg", "target_layer": "Neu", "style": "g"}]},
+            "output": "Zeichnung/plan.dxf"}
+    wf = tmp_path / "workflow.yaml"
+    wf.write_text(yaml.safe_dump({"project": {"name": "t"}, "steps": [step]}),
+                  encoding="utf-8")
+    assert wf.stat().st_mtime > out.stat().st_mtime
+    assert _dry_run_status(tmp_path, capsys)["DXF"] == "SKIP (outputs exist)"
+    assert run_workflow(tmp_path) is True
+    assert "DXF — skipped" in capsys.readouterr().out
+    assert out.stat().st_mtime == 2000
