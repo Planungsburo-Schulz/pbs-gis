@@ -12,6 +12,12 @@ Ein Leitungsträger-Lageplan ohne Koordinaten trägt zwei Linienpopulationen
   wird sie an einem neuen Plan gefunden statt geraten
   (:func:`dominant_stroke_width`).
 
+Nicht jeder Plan trägt ein Strichmuster: wer Strichlinien in Einzelstriche
+auflöst, unterscheidet Kataster und Sparten nur über **Farbe und Stärke**.
+Dafür gibt es den zweiten Auswahl-Modus, :class:`StrokeClass` je Klasse
+(``sheet_vectors(..., classes=...)``). Beide Modi schließen sich aus — ein
+Aufruf wählt entweder über das Muster oder über die Klassen.
+
 Die Zahlenwerte (dasharray ``5.76 2.88 1.15 2.88``, Stärke 1,73 pt) sind an
 EINER Vorlage gemessen (Telekom A637417, PTI 23) und stehen deshalb als
 Default eines Schlüsselworts, nie als Konstante.
@@ -34,6 +40,7 @@ from __future__ import annotations
 import re
 import subprocess
 import xml.etree.ElementTree as ET
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -45,6 +52,7 @@ __all__ = [
     "EinpassungError",
     "SheetFrame",
     "SheetVectors",
+    "StrokeClass",
     "SvgPath",
     "chain_length",
     "dominant_stroke_width",
@@ -152,6 +160,31 @@ class SvgPath:
 
 
 @dataclass(frozen=True)
+class StrokeClass:
+    """Eine Linienklasse über Strichfarbe UND Strichstärke.
+
+    ``stroke`` wird GENAU mit dem ``stroke``-Attribut verglichen, wie
+    ``pdftocairo`` es schreibt (``"rgb(0%, 75%, 0%)"``) — kein Teilstring:
+    ``"0%, 0%, 100%"`` steckt als Teilstring auch in einem helleren Blau, und
+    eine Klasse, die eine fremde Farbe still mitnimmt, ist von einer richtigen
+    am Ergebnis nicht zu unterscheiden.
+
+    Args:
+        stroke: Farbstring wie im SVG.
+        width_pt: Strichstärke in pt.
+        tol: Toleranz des Stärkenvergleichs in pt.
+    """
+
+    stroke: str
+    width_pt: float
+    tol: float = 0.005
+
+    def matches(self, path: SvgPath) -> bool:
+        return (path.stroke_width_pt is not None and path.stroke == self.stroke
+                and abs(path.stroke_width_pt - self.width_pt) <= self.tol)
+
+
+@dataclass(frozen=True)
 class SheetFrame:
     """Der Kartenrahmen eines Blatts, in Bodenmetern (y nach oben).
 
@@ -210,6 +243,11 @@ class SheetVectors:
 
     ``kataster`` und ``leitung`` sind Listen von ``(n, 2)``-Arrays; der
     Blattursprung ist die linke untere Blattecke, y zeigt nach oben.
+
+    Im Klassen-Modus trägt ``classes`` die Züge je Klasse; ``kataster`` ist
+    dann die Klasse ``"kataster"`` und ``leitung`` alle übrigen Klassen in
+    der Reihenfolge der Zuordnung — nachgelagerter Code liest beide Modi
+    gleich. Im Muster-Modus ist ``classes`` leer.
     """
 
     page: int
@@ -219,6 +257,7 @@ class SheetVectors:
     dasharray: str
     frame: SheetFrame
     scale: float = 500.0
+    classes: dict[str, list[np.ndarray]] = field(default_factory=dict)
 
     @property
     def kataster_length_m(self) -> float:
@@ -380,6 +419,7 @@ def sheet_vectors(
     page_size_pt: tuple[float, float] = DEFAULT_PAGE_SIZE_PT,
     frame_inset_pt: float = DEFAULT_FRAME_INSET_PT,
     frame_tol_m: float = 0.35,
+    classes: Mapping[str, StrokeClass] | None = None,
 ) -> SheetVectors:
     """Katastersignatur und Leitung EINES Blatts trennen, in Bodenmetern.
 
@@ -388,7 +428,7 @@ def sheet_vectors(
         page: 1-basierte Seitenzahl.
         dasharray: Strichmuster der Katastersignatur — String wie im SVG oder
             Zahlenfolge. Default ``"5.76 2.88 1.15 2.88"``, gemessen an der
-            Telekom-Vorlage A637417 (PTI 23).
+            Telekom-Vorlage A637417 (PTI 23). Gilt nur im Muster-Modus.
         stroke_width_pt: tragende Strichstärke; ``None`` misst sie am Blatt
             selbst (:func:`dominant_stroke_width`) — der portable Weg.
             Default 1,73 pt, an derselben Vorlage gemessen.
@@ -398,18 +438,68 @@ def sheet_vectors(
         page_size_pt: Blattformat in pt (Default A3 quer).
         frame_inset_pt: Abstand der Kartenrahmenlinie von der Blattkante.
         frame_tol_m: Fangbreite des Rahmens in Metern.
+        classes: Klassen-Modus — Klassenname -> :class:`StrokeClass`. Ein
+            Pfad gehört zu der Klasse, deren Farbe er exakt trägt und deren
+            Stärke er innerhalb ``tol`` trifft; ``stroke_width_pt``,
+            ``stroke_width_tol`` und ``exclude_stroke`` wirken dann nicht.
+            Der Schlüssel ``"kataster"`` ist Pflicht.
 
     Raises:
         EinpassungError: das Blatt trägt keinen Pfad der tragenden
-            Strichstärke — dann ist entweder die Stärke falsch geraten oder
-            das Blatt trägt die Population nicht.
+            Strichstärke (im Klassen-Modus: keinen der Klasse
+            ``"kataster"``) — dann ist entweder die Auswahl falsch geraten
+            oder das Blatt trägt die Population nicht. Im Klassen-Modus
+            außerdem: ``"kataster"`` fehlt, ein Pfad passt auf zwei Klassen,
+            oder zugleich ist ein abweichendes ``dasharray`` gesetzt. Eine
+            LEERE Sparten-Klasse wirft nicht — ein Blatt ohne Leitung ist
+            eine Fehlanzeige, kein Lesefehler.
     """
+    if classes is not None:
+        if "kataster" not in classes:
+            raise EinpassungError(
+                f"classes braucht den Schlüssel 'kataster' — er trägt die "
+                f"Signatur, an der eingepasst wird; übergeben: {sorted(classes)}.")
+        if not _dash_equal(_parse_dash(dasharray), _parse_dash(DEFAULT_DASHARRAY)):
+            raise EinpassungError(
+                f"classes und dasharray={dasharray!r} zugleich — zwei Auswahl-"
+                "Modi in einem Aufruf; der Klassen-Modus wählt nicht über das "
+                "Strichmuster.")
     paths = read_svg_paths(source, page, page_height_pt=page_size_pt[1])
+    k = m_per_pt(scale)
+    frame = sheet_frame(page_size_pt=page_size_pt, inset_pt=frame_inset_pt,
+                        scale=scale, tol=frame_tol_m)
+
+    if classes is not None:
+        by_class: dict[str, list[np.ndarray]] = {name: [] for name in classes}
+        for i, p in enumerate(paths):
+            hits = [name for name, c in classes.items() if c.matches(p)]
+            if not hits:
+                continue
+            if len(hits) > 1:
+                raise EinpassungError(
+                    f"Seite {page}, Pfad {i} der gelesenen Pfade ({p.stroke}, "
+                    f"{p.stroke_width_pt} pt) passt auf die Klassen "
+                    + " und ".join(repr(h) for h in hits)
+                    + " — die Klassen überlappen in Farbe und Stärke-Toleranz.")
+            fail_bei_fremdkommando(p, page, i)
+            by_class[hits[0]].append(p.points * k)
+        kat = classes["kataster"]
+        if not by_class["kataster"]:
+            raise EinpassungError(
+                f"Seite {page}: kein Pfad der Klasse 'kataster' ({kat.stroke}, "
+                f"{kat.width_pt} pt ±{kat.tol}). Farbe und Stärke am Blatt messen "
+                "(read_svg_paths) statt raten.")
+        return SheetVectors(
+            page=page, kataster=by_class["kataster"],
+            leitung=[c for name, chains in by_class.items() if name != "kataster"
+                     for c in chains],
+            stroke_width_pt=float(kat.width_pt), dasharray="", frame=frame,
+            scale=scale, classes=by_class)
+
     if stroke_width_pt is None:
         stroke_width_pt = dominant_stroke_width(paths, exclude_stroke=exclude_stroke)
 
     want = _parse_dash(dasharray)
-    k = m_per_pt(scale)
     kataster: list[np.ndarray] = []
     leitung: list[np.ndarray] = []
     for i, p in enumerate(paths):
@@ -433,6 +523,4 @@ def sheet_vectors(
         page=page, kataster=kataster, leitung=leitung,
         stroke_width_pt=float(stroke_width_pt),
         dasharray=dasharray if isinstance(dasharray, str) else " ".join(map(str, want)),
-        frame=sheet_frame(page_size_pt=page_size_pt, inset_pt=frame_inset_pt,
-                          scale=scale, tol=frame_tol_m),
-        scale=scale)
+        frame=frame, scale=scale)

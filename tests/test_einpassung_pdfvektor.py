@@ -20,6 +20,7 @@ import pytest
 from pbs_gis.einpassung import (
     EinpassungError,
     SheetFrame,
+    StrokeClass,
     dominant_stroke_width,
     m_per_pt,
     read_svg_paths,
@@ -309,3 +310,105 @@ def test_sheet_vectors_schweigt_wenn_die_kurve_ohnehin_rausfaellt(tmp_path):
             f'<path {_KURVE} stroke="#000"/>')
     sv = sheet_vectors(_svg_roh(tmp_path, body), 1, stroke_width_pt=1.73)
     assert len(sv.kataster) == 1 and sv.leitung == []
+
+
+# --- Klassen über Farbe + Stärke: Pläne OHNE Strichmuster -------------------
+# Ein Plan, der Strichlinien in Einzelstriche auflöst, trägt kein dasharray;
+# Kataster und Sparten unterscheiden sich dort nur in Farbe und Stärke. Die
+# Farbstrings sind die, die pdftocairo schreibt.
+
+SCHWARZ = "rgb(0%, 0%, 0%)"
+GRUEN = "rgb(0%, 75%, 0%)"
+BLAU = "rgb(0%, 0%, 100%)"
+
+KLASSEN = {
+    "kataster": StrokeClass(SCHWARZ, 1.02),
+    "msp": StrokeClass(GRUEN, 1.417),
+    "nsp": StrokeClass(BLAU, 0.992),
+}
+
+
+@pytest.fixture
+def farbplan(tmp_path):
+    """Kataster schwarz 1,02 · MS grün 1,417 · NS blau 0,992 · grünes Beiwerk 0,992."""
+    content = (
+        synthplan.polyline([(100, 100), (300, 100), (300, 300)], width=1.02)          # 400 pt
+        + synthplan.polyline([(400, 100), (600, 100)], width=1.417, rgb=(0, 0.75, 0))  # 200 pt
+        + synthplan.polyline([(400, 300), (700, 300)], width=0.992, rgb=(0, 0, 1))     # 300 pt
+        + synthplan.polyline([(100, 600), (200, 600)], width=0.992, rgb=(0, 0.75, 0))  # Beiwerk
+    )
+    return _plan(tmp_path, content, name="farbplan.pdf")
+
+
+def _laenge(chains):
+    return sum(float(np.hypot(*np.diff(c, axis=0).T).sum()) for c in chains)
+
+
+def test_klassen_trennen_nach_farbe_und_staerke(farbplan):
+    """Positivprobe: jede Klasse bekommt genau ihre Züge, das Beiwerk keine."""
+    sv = sheet_vectors(farbplan, 1, classes=KLASSEN)
+    k = m_per_pt(500)
+    assert sorted(sv.classes) == ["kataster", "msp", "nsp"]
+    assert [len(sv.classes[n]) for n in ("kataster", "msp", "nsp")] == [1, 1, 1]
+    assert _laenge(sv.classes["kataster"]) == pytest.approx(400 * k, rel=REL_TOL)
+    assert _laenge(sv.classes["msp"]) == pytest.approx(200 * k, rel=REL_TOL)
+    assert _laenge(sv.classes["nsp"]) == pytest.approx(300 * k, rel=REL_TOL)
+    # Nachgelagerter Code liest kataster/leitung — beide folgen den Klassen.
+    assert sv.kataster == sv.classes["kataster"]
+    assert sv.leitung_length_m == pytest.approx(500 * k, rel=REL_TOL)
+
+
+def test_klassenmodus_ignoriert_den_farbausschluss(farbplan):
+    """Reines Blau trägt den Default-Ausschluss "100%" — als Klasse zählt es trotzdem."""
+    assert "100%" in BLAU
+    sv = sheet_vectors(farbplan, 1, classes=KLASSEN)
+    assert len(sv.classes["nsp"]) == 1
+
+
+def test_dasharray_modus_bleibt_auf_dem_farbplan_unveraendert(farbplan):
+    """Negativprobe: ohne ``classes`` trennt nichts nach Farbe.
+
+    Auf der tragenden Stärke 1,02 pt liegt nur der schwarze Zug, und ohne
+    Strichmuster ist er Leitung, nicht Kataster — so liest der Muster-Modus
+    diesen Plan, und so muss er ihn weiter lesen.
+    """
+    sv = sheet_vectors(farbplan, 1, stroke_width_pt=1.02)
+    assert sv.kataster == []
+    assert len(sv.leitung) == 1
+    assert sv.leitung_length_m == pytest.approx(400 * m_per_pt(500), rel=REL_TOL)
+    assert sv.classes == {}
+
+
+def test_dasharray_modus_unveraendert_auf_dem_musterplan(mixed_plan):
+    sv = sheet_vectors(mixed_plan, 1)
+    assert sv.classes == {}
+    assert len(sv.kataster) == 1 and len(sv.leitung) == 1
+
+
+def test_pfad_auf_zwei_klassen_wirft(farbplan):
+    klassen = dict(KLASSEN, nsp_zwilling=StrokeClass(BLAU, 0.99))
+    with pytest.raises(EinpassungError, match="'nsp'.*'nsp_zwilling'"):
+        sheet_vectors(farbplan, 1, classes=klassen)
+
+
+def test_klassen_ohne_kataster_wirft(farbplan):
+    with pytest.raises(EinpassungError, match="'kataster'"):
+        sheet_vectors(farbplan, 1, classes={"msp": KLASSEN["msp"]})
+
+
+def test_klassen_und_strichmuster_zugleich_wirft(farbplan):
+    with pytest.raises(EinpassungError, match="zwei Auswahl"):
+        sheet_vectors(farbplan, 1, classes=KLASSEN, dasharray="3.0 3.0")
+
+
+def test_leere_kataster_klasse_wirft(farbplan):
+    klassen = dict(KLASSEN, kataster=StrokeClass(SCHWARZ, 2.5))
+    with pytest.raises(EinpassungError, match="Klasse 'kataster'"):
+        sheet_vectors(farbplan, 1, classes=klassen)
+
+
+def test_leere_spartenklasse_ist_eine_legitime_fehlanzeige(farbplan):
+    """Ein Blatt ohne Leitung trägt die Klasse leer — das ist ein Befund, kein Fehler."""
+    klassen = dict(KLASSEN, fm=StrokeClass("rgb(94%, 45%, 93%)", 0.992))
+    sv = sheet_vectors(farbplan, 1, classes=klassen)
+    assert sv.classes["fm"] == []

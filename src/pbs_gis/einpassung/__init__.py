@@ -11,7 +11,8 @@ Kataster, ist die Kartengrundlage lagetreu und die Leitung mit ihr eingepasst.
 Pipeline (die Reihenfolge ist der Mechanismus, nicht Geschmack)
 ---------------------------------------------------------------
 1. **Struktur** — :func:`sheet_vectors` trennt Katastersignatur von Leitung
-   über das Strichmuster (Mechanismus 1).
+   über das Strichmuster (Mechanismus 1) oder, an Plänen ohne Strichmuster,
+   über Farbe + Stärke je :class:`StrokeClass`.
 2. **Blattverbund** — :func:`sheet_mosaic` registriert überlappende
    Blattpaare, :func:`chain_over_overview` verkettet den Rest über das
    Übersichtsblatt, :func:`sheet_cut_rectangles` + :func:`pin_positions`
@@ -118,6 +119,7 @@ from pbs_gis.einpassung.pdfvektor import (
     EinpassungError,
     SheetFrame,
     SheetVectors,
+    StrokeClass,
     SvgPath,
     chain_length,
     dominant_stroke_width,
@@ -137,6 +139,7 @@ __all__ = [
     "EinpassungError",
     "SheetFrame",
     "SheetVectors",
+    "StrokeClass",
     "SvgPath",
     "chain_length",
     "dominant_stroke_width",
