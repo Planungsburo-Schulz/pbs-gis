@@ -21,7 +21,7 @@ Werkzeug: `pbs_gis.einpassung` (Mechanismen 1–5), Referenz über `pbs_gis.wfs`
 
 ### Reihenfolge — das IST der Mechanismus
 
-**Struktur → Blattverbund → robuster Fit → ICP → Isolation.** Diese fünf Schritte liefert `pbs_gis.einpassung`; sein Ergebnis ist der ausgewiesene Transform, nicht die geschriebene Datei. **Das Herausschreiben der eingepassten Geometrie ist Handarbeit des Bearbeiters** — `apply_points` auf Leitung und Signatur, Schreib-Weg nach dem Beleg (RUNBOOK RL-E). Der Blattverbund macht aus neun schwachen Einzeloptima ein starres System. Ein Einzelblatt direkt gegen ALKIS zu fitten hat im Ursprungsfall siebenmal versagt.
+**Struktur → Blattverbund → robuster Fit → ICP → Isolation → Export.** Alle sechs Schritte liefert `pbs_gis.einpassung`; das Ergebnis der ersten fünf ist der ausgewiesene Transform, der Export schreibt ihn aus: **`export_gpkg`** wendet ihn je Blatt auf die Züge an (`T(P − Lage_p)`) und schreibt einen GeoPackage-Layer je Klasse, je Zug `blatt`, `lageklasse`, `laenge_m`. Was ein Fall darüber hinaus braucht (Plansatz, Strichklasse, Overlays, bereinigte Arbeitslinie), bleibt fallbezogen. Der Blattverbund macht aus neun schwachen Einzeloptima ein starres System. Ein Einzelblatt direkt gegen ALKIS zu fitten hat im Ursprungsfall siebenmal versagt.
 
 ```python
 from pbs_gis.einpassung import (
@@ -29,6 +29,7 @@ from pbs_gis.einpassung import (
     chain_over_overview, verify_chaining, sheet_cut_rectangles,
     predict_positions, pin_positions, reference_rings, sample_rings,
     chamfer_field, coarse_fit, icp_helmert, compose, isolation, apply_points,
+    export_gpkg,
 )
 
 # 1 Struktur — das Muster trennt Kataster von Leitung
@@ -57,6 +58,12 @@ fine   = icp_helmert(apply_points(coarse.transform, netz), sample_rings(rings, 0
 T      = compose(fine, coarse.transform)
 iso    = isolation(apply_points(T, netz), rings)
 T      = iso.stamp(T)          # der Transform trägt seinen Ausweis
+
+# 6 Export — ein Layer je Klasse, je Zug Blatt + Lageklasse
+export_gpkg("einpassung_25833.gpkg",
+            layers={"leitung": {p: sv.leitung for p, sv in sheets.items()},
+                    "katastersignatur": {p: sv.kataster for p, sv in sheets.items()}},
+            transform=T, positions=lagen, lageklasse=klasse, crs="EPSG:25833")
 ```
 
 ### Referenz beschaffen (Mechanismus 6)
@@ -87,6 +94,7 @@ Strichmuster (`5.76 2.88 1.15 2.88`) und Strichstärke (1,73 pt) sind an EINER V
 - Das **Muster** trennt Kataster von Leitung; die **Stärke allein** addiert beides.
 - Die tragende Stärke ist die **längste nicht-ausgeschlossene Gruppe** — an einem neuen Plan mit `sheet_vectors(..., stroke_width_pt=None)` messen, nicht übernehmen.
 - Am neuen Plan zuerst `read_svg_paths` + `dominant_stroke_width` laufen lassen und die Klassen ansehen, bevor eine Zahl gesetzt wird.
+- **Kein Strichmuster im SVG** (Strichlinien in Einzelstriche aufgelöst, z. B. E.DIS): Klassen über Farbe + Stärke trennen — `sheet_vectors(PDF, p, classes={"kataster": StrokeClass("rgb(0%, 0%, 0%)", 1.02), …})`, Farbstring exakt wie im SVG. Eine Sparte aus zwei Farben/Stärken ist zwei Klassen.
 
 ### Pflicht-Proben (jede hat schon einmal etwas gefangen)
 
