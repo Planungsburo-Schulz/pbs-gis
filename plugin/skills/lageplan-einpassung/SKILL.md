@@ -36,7 +36,9 @@ from pbs_gis.einpassung import (
 sheets = {p: sheet_vectors(PDF, p) for p in range(2, 10)}
 verts  = {p: vertices(sv.kataster + sv.leitung, sv.frame) for p, sv in sheets.items()}
 
-# 2 Blattpaare mit direktem Überlapp
+# 2 Blattpaare mit direktem Überlapp — ein Blatt ohne Kantenweg zum
+#   Referenzblatt steht in mos.unplaced, nicht in mos.origins; seine Lage kommt
+#   aus dem Blattschnitt (Schritt 4) als sheet_mosaic(..., pinned={p: -lage})
 mos = sheet_mosaic(verts, reference=2)
 
 # 3 Verkettung über das Übersichtsblatt + PFLICHT-PROBE
@@ -94,7 +96,7 @@ Strichmuster (`5.76 2.88 1.15 2.88`) und Strichstärke (1,73 pt) sind an EINER V
 - Das **Muster** trennt Kataster von Leitung; die **Stärke allein** addiert beides.
 - Die tragende Stärke ist die **längste nicht-ausgeschlossene Gruppe** — an einem neuen Plan mit `sheet_vectors(..., stroke_width_pt=None)` messen, nicht übernehmen.
 - Am neuen Plan zuerst `read_svg_paths` + `dominant_stroke_width` laufen lassen und die Klassen ansehen, bevor eine Zahl gesetzt wird.
-- **Kein Strichmuster im SVG** (Strichlinien in Einzelstriche aufgelöst, z. B. E.DIS): Klassen über Farbe + Stärke trennen — `sheet_vectors(PDF, p, classes={"kataster": StrokeClass("rgb(0%, 0%, 0%)", 1.02), …})`, Farbstring exakt wie im SVG. Eine Sparte aus zwei Farben/Stärken ist zwei Klassen.
+- **Kein Strichmuster im SVG** (Strichlinien in Einzelstriche aufgelöst, z. B. E.DIS): Klassen über Farbe + Stärke trennen — `sheet_vectors(PDF, p, classes={"kataster": StrokeClass("rgb(0%, 0%, 0%)", 1.02), …})`, Farbstring exakt wie im SVG. Eine Sparte aus zwei Farben/Stärken ist EINE Klasse mit zwei Signaturen: `"nsp": (StrokeClass(blau, 0.992), StrokeClass(hellblau, 0.709))`.
 
 ### Pflicht-Proben (jede hat schon einmal etwas gefangen)
 
