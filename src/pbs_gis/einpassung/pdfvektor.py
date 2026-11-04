@@ -222,7 +222,7 @@ class SheetFrame:
 def sheet_frame(
     *,
     page_size_pt: tuple[float, float] = DEFAULT_PAGE_SIZE_PT,
-    inset_pt: float = DEFAULT_FRAME_INSET_PT,
+    inset_pt: float | tuple[float, float, float, float] = DEFAULT_FRAME_INSET_PT,
     scale: float = 500.0,
     tol: float = 0.35,
 ) -> SheetFrame:
@@ -230,15 +230,29 @@ def sheet_frame(
 
     Args:
         page_size_pt: Blattformat (Breite, Höhe) in pt; Default A3 quer.
-        inset_pt: Abstand der Rahmenlinie von der Blattkante; 11,340222 pt an
-            der Telekom-Vorlage gemessen.
+        inset_pt: Abstand der Rahmenlinie von der Blattkante — eine Zahl für
+            alle vier Seiten (11,340222 pt an der Telekom-Vorlage gemessen)
+            oder ``(links, unten, rechts, oben)`` in pt für einen Rahmen mit
+            Plankopf-Streifen (E.DIS 1945942: ``(42.91, 122.69, 15.01, 14.22)``).
         scale: Kartenmaßstabsnenner (500 = 1:500).
         tol: Fangbreite in Metern, mit der ein Punkt als „am Rahmen" gilt.
+
+    Raises:
+        EinpassungError: ein Tupel mit anderer Länge als vier.
     """
+    if isinstance(inset_pt, (int, float)):
+        links = unten = rechts = oben = float(inset_pt)
+    else:
+        seiten = tuple(float(v) for v in inset_pt)
+        if len(seiten) != 4:
+            raise EinpassungError(
+                f"inset_pt={inset_pt!r}: ein Rahmen-Einzug je Seite braucht vier "
+                "Werte (links, unten, rechts, oben).")
+        links, unten, rechts, oben = seiten
     w, h = page_size_pt
     k = m_per_pt(scale)
-    return SheetFrame(x=(inset_pt * k, (w - inset_pt) * k),
-                      y=(inset_pt * k, (h - inset_pt) * k), tol=tol)
+    return SheetFrame(x=(links * k, (w - rechts) * k),
+                      y=(unten * k, (h - oben) * k), tol=tol)
 
 
 @dataclass
@@ -421,7 +435,7 @@ def sheet_vectors(
     exclude_stroke: str | None = _DEFAULT_EXCLUDE_STROKE,
     scale: float = 500.0,
     page_size_pt: tuple[float, float] = DEFAULT_PAGE_SIZE_PT,
-    frame_inset_pt: float = DEFAULT_FRAME_INSET_PT,
+    frame_inset_pt: float | tuple[float, float, float, float] = DEFAULT_FRAME_INSET_PT,
     frame_tol_m: float = 0.35,
     classes: Mapping[str, StrokeClass | Sequence[StrokeClass]] | None = None,
 ) -> SheetVectors:
@@ -440,7 +454,9 @@ def sheet_vectors(
         exclude_stroke: siehe :func:`dominant_stroke_width`.
         scale: Kartenmaßstabsnenner; 500 = 1:500.
         page_size_pt: Blattformat in pt (Default A3 quer).
-        frame_inset_pt: Abstand der Kartenrahmenlinie von der Blattkante.
+        frame_inset_pt: Abstand der Kartenrahmenlinie von der Blattkante —
+            eine Zahl oder ``(links, unten, rechts, oben)`` in pt
+            (:func:`sheet_frame`).
         frame_tol_m: Fangbreite des Rahmens in Metern.
         classes: Klassen-Modus — Klassenname -> :class:`StrokeClass` oder
             eine Folge davon (eine Sparte, die der Plan in zwei Farben oder

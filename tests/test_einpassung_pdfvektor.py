@@ -226,6 +226,33 @@ def test_rahmen_maske_trifft_nur_die_rahmennahen_punkte():
     assert not frame.inside(aussen)[0]
 
 
+def test_rahmen_einzug_je_seite():
+    """Instrumenten-Paar: ein Tupel (links, unten, rechts, oben) setzt jede
+    Seite für sich; eine Zahl hält den gleichmäßigen Rahmen wie zuvor."""
+    k = m_per_pt(500)
+    w, h = 3367.61, 2381.15
+    je_seite = sheet_frame(page_size_pt=(w, h), inset_pt=(42.91, 122.69, 15.01, 14.22))
+    assert je_seite.x == pytest.approx((42.91 * k, (w - 15.01) * k))
+    assert je_seite.y == pytest.approx((122.69 * k, (h - 14.22) * k))
+    gleich = sheet_frame(inset_pt=11.340222)
+    w3, h3 = 1190.55, 841.89
+    assert gleich.x == pytest.approx((11.340222 * k, (w3 - 11.340222) * k))
+    assert gleich.y == pytest.approx((11.340222 * k, (h3 - 11.340222) * k))
+    assert gleich == sheet_frame(inset_pt=(11.340222,) * 4)
+
+
+def test_rahmen_einzug_mit_falscher_seitenzahl_wirft():
+    with pytest.raises(EinpassungError, match="vier Werte"):
+        sheet_frame(inset_pt=(1.0, 2.0, 3.0))
+
+
+def test_sheet_vectors_reicht_den_einzug_je_seite_durch(mixed_plan):
+    k = m_per_pt(500)
+    sv = sheet_vectors(mixed_plan, 1, frame_inset_pt=(20.0, 30.0, 40.0, 50.0))
+    assert sv.frame.x == pytest.approx((20.0 * k, (1190.55 - 40.0) * k))
+    assert sv.frame.y == pytest.approx((30.0 * k, (841.89 - 50.0) * k))
+
+
 def test_rahmen_toleranz_ist_parameter():
     eng = SheetFrame(x=(0.0, 100.0), y=(0.0, 100.0), tol=0.1)
     weit = SheetFrame(x=(0.0, 100.0), y=(0.0, 100.0), tol=5.0)
