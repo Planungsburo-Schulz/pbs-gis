@@ -105,7 +105,8 @@ def _newest_mtime(path: Path) -> float:
     return max(mtimes) if mtimes else path.stat().st_mtime
 
 
-def should_skip(step: dict, project_dir: Path) -> bool:
+def should_skip(step: dict, project_dir: Path,
+                by_name: dict[str, dict] | None = None) -> bool:
     """Check if an 'auto' step can be skipped.
 
     Skip only if all outputs exist AND no declared input is newer than the
@@ -113,10 +114,14 @@ def should_skip(step: dict, project_dir: Path) -> bool:
     (any step), the step's own ``script:`` (so a code edit re-runs it), plus,
     for recipe steps, ``input_boundary:`` (the scope file) and, for ops steps,
     ``input:`` (the source layer).
-    Declaring a step's real input files — including upstream steps' outputs —
-    lets a single ``gis-workflow run`` re-run the step, and cascade downstream,
-    when the data changes, instead of skipping on mere output existence.
-    Without declared inputs the old behaviour stands: skip if outputs exist.
+    Given *by_name* (all steps of the workflow), the outputs of every
+    ``depends_on`` step count as inputs too: a step that names its producer
+    reads what the producer writes, so a rewritten upstream output makes it
+    stale even when it declares no ``inputs:`` of its own.
+    Declaring a step's real input files lets a single ``gis-workflow run``
+    re-run the step, and cascade downstream, when the data changes, instead of
+    skipping on mere output existence.
+    Without any input the old behaviour stands: skip if outputs exist.
     """
     if step.get("run", "auto") != "auto":
         return False
@@ -129,16 +134,20 @@ def should_skip(step: dict, project_dir: Path) -> bool:
         return False
     oldest_output = min(p.stat().st_mtime for p in output_paths)
 
-    for inp in _declared_inputs(step):
+    for inp in _declared_inputs(step, by_name):
         if _newest_mtime(project_dir / inp) > oldest_output:
             return False  # input changed — re-run
 
     return True
 
 
-def _declared_inputs(step: dict) -> list[str]:
+def _declared_inputs(step: dict, by_name: dict[str, dict] | None = None) -> list[str]:
     """The paths whose change makes an ``auto`` step stale (see :func:`should_skip`)."""
     declared_inputs = list(step.get("inputs", []))
+    # A ``depends_on`` producer's outputs are what this step reads.
+    for dep in step.get("depends_on", []) if by_name else []:
+        if dep in by_name:
+            declared_inputs.extend(_collect_outputs(by_name[dep]))
     # A step depends on its own script (make-style: target depends on its recipe),
     # so editing the script re-runs the step and cascades downstream.
     if step.get("script"):
@@ -175,12 +184,14 @@ def plan_runs(ordered: list[dict], project_dir: Path) -> dict[str, list[str]]:
     """
     planned: dict[str, list[str]] = {}
     outputs_of: dict[str, list[Path]] = {}
+    by_name = {s["name"]: s for s in ordered}
     for step in ordered:
         name = step["name"]
-        inputs = [(project_dir / inp).resolve() for inp in _declared_inputs(step)]
+        inputs = [(project_dir / inp).resolve()
+                  for inp in _declared_inputs(step, by_name)]
         upstream = [up for up, outs in outputs_of.items()
                     if any(_paths_overlap(i, o) for i in inputs for o in outs)]
-        if upstream or not should_skip(step, project_dir):
+        if upstream or not should_skip(step, project_dir, by_name):
             planned[name] = upstream
             outputs_of[name] = [(project_dir / out).resolve()
                                 for out in _collect_outputs(step)]
@@ -440,6 +451,7 @@ def run_workflow(
         return True
 
     ordered = resolve_order(steps)
+    all_by_name = {s["name"]: s for s in ordered}
 
     # Filter to single step + dependencies if requested
     if step_name:
@@ -482,7 +494,7 @@ def run_workflow(
                 print(f"        → {detail}")
             continue
 
-        if should_skip(step, project_dir):
+        if should_skip(step, project_dir, all_by_name):
             print(f"  {prefix} {name} — skipped (outputs exist)")
             continue
 

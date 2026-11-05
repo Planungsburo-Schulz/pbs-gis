@@ -15,6 +15,7 @@ from pbs_gis.runner import (
     _collect_deps,
     _collect_outputs,
     _resolve_extent,
+    plan_runs,
     resolve_order,
     should_skip,
 )
@@ -362,3 +363,39 @@ def test_params_aenderung_in_workflow_yaml_loest_keinen_neulauf_aus(tmp_path, ca
     assert run_workflow(tmp_path) is True
     assert "DXF — skipped" in capsys.readouterr().out
     assert out.stat().st_mtime == 2000
+
+
+# --- depends_on makes the upstream step's outputs an input ---------------------
+
+def _bilanz_kette():
+    erzeuger = {"name": "erzeuger", "script": "s.py", "outputs": ["kat.gpkg"]}
+    bilanz = {"name": "bilanz", "template": "publish_bilanz",
+              "output": "bilanz.yaml", "depends_on": ["erzeuger"]}
+    return erzeuger, bilanz
+
+
+def test_should_skip_depends_on_upstream_output_newer_runs(tmp_path):
+    # A step naming only its producer (no ``inputs:``) still reads the
+    # producer's outputs; a rewritten output must make it stale.
+    erzeuger, bilanz = _bilanz_kette()
+    _touch(tmp_path / "bilanz.yaml", mtime=1000)
+    _touch(tmp_path / "kat.gpkg", mtime=2000)
+    by_name = {s["name"]: s for s in (erzeuger, bilanz)}
+    assert should_skip(bilanz, tmp_path, by_name) is False
+
+
+def test_should_skip_depends_on_upstream_output_older_skips(tmp_path):
+    erzeuger, bilanz = _bilanz_kette()
+    _touch(tmp_path / "bilanz.yaml", mtime=2000)
+    _touch(tmp_path / "kat.gpkg", mtime=1000)
+    by_name = {s["name"]: s for s in (erzeuger, bilanz)}
+    assert should_skip(bilanz, tmp_path, by_name) is True
+
+
+def test_plan_runs_depends_on_cascades_without_declared_inputs(tmp_path):
+    erzeuger, bilanz = _bilanz_kette()
+    _touch(tmp_path / "s.py", mtime=3000)          # edited script → erzeuger runs
+    _touch(tmp_path / "kat.gpkg", mtime=2000)
+    _touch(tmp_path / "bilanz.yaml", mtime=2500)   # bilanz newer than kat today
+    plan = plan_runs([erzeuger, bilanz], tmp_path)
+    assert plan == {"erzeuger": [], "bilanz": ["erzeuger"]}
