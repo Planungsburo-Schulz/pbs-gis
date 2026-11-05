@@ -436,6 +436,10 @@ def export_layers(
                 f"Known: {sorted(style_map)}"
             )
 
+        if spec.label_field is not None and style.text is None:
+            raise ExportError(
+                f"Layer {spec.target_layer!r}: label_field {spec.label_field!r} needs a "
+                f"style with a 'text' block; style {spec.style!r} has none")
         if spec.point_block is not None and spec.point_block not in doc.blocks:
             raise ExportError(
                 f"Layer {spec.target_layer!r}: point_block {spec.point_block!r} is not "

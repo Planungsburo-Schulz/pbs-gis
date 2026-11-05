@@ -306,6 +306,17 @@ def test_cad_export_bloecke_werfen_laut_ohne_dxf(tmp_path, bad, match):
     assert not (tmp_path / "o.dxf").exists()
 
 
+def test_cad_export_label_field_ohne_text_stil_bricht_laut(tmp_path):
+    """Eine Beschriftung, die der Stil nicht setzen kann, fehlt sonst still im Plan."""
+    layers = _zwei_layer_projekt(tmp_path)
+    layers[0]["label_field"] = "name"
+    with pytest.raises(ValueError, match="label_field"):
+        get_template("cad_export")(
+            {"crs": CRS, "styles": _STYLES_MIT_TEXT, "layers": layers}, tmp_path,
+            tmp_path / "o.dxf")
+    assert not (tmp_path / "o.dxf").exists()
+
+
 def test_cad_export_missing_layers_raises(tmp_path):
     with pytest.raises(ValueError):
         get_template("cad_export")({"crs": CRS, "styles": {}, "layers": []},
