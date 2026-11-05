@@ -39,6 +39,7 @@ from pbs_gis.templates import register
 
 _TEXT_KEYS = frozenset({"text", "position", "style", "layer"})
 _LEGEND_KEYS = frozenset({"position", "entries"})
+_BLOCK_KEYS = frozenset({"block", "position", "layer", "scale", "rotation"})
 
 
 def _position(value, where: str) -> tuple[float, float]:
@@ -113,10 +114,50 @@ def _plan_annotations(texts, legend, specs, style_map):
     return text_calls, (entries, _position(legend.get("position"), "legend"))
 
 
+def _plan_blocks(blocks, specs, known_blocks: set[str]):
+    """Resolve ``blocks`` into :func:`insert_block` calls and check every block
+    name (free and per-layer ``point_block``) against the base document, or raise.
+
+    Runs before the DXF is written, for the same reason as
+    :func:`_plan_annotations`: the base document (template DXF) is the only place
+    a block can come from, so a missing name is known before anything is emitted.
+    """
+    for s in specs:
+        if s.point_block is not None and s.point_block not in known_blocks:
+            raise ValueError(
+                f"cad_export: layer {s.target_layer!r}: point_block {s.point_block!r} "
+                f"is not defined in the template DXF")
+    calls = []
+    for i, entry in enumerate(blocks or []):
+        where = f"blocks[{i}]"
+        _reject_unknown(entry, _BLOCK_KEYS, where)
+        name = entry.get("block")
+        if name not in known_blocks:
+            raise ValueError(f"cad_export: {where}: block {name!r} is not defined in the "
+                             f"template DXF")
+        kwargs = {"scale": float(entry.get("scale", 1.0)),
+                  "rotation": float(entry.get("rotation", 0.0))}
+        if entry.get("layer") is not None:
+            kwargs["layer"] = entry["layer"]
+        calls.append((name, _position(entry.get("position"), where), kwargs))
+    return calls
+
+
+def _base_blocks(template_dxf: Path | None, output_path: Path) -> set[str]:
+    """Block names of the document the export will draw on."""
+    import ezdxf
+
+    base = template_dxf if template_dxf else (output_path if output_path.exists() else None)
+    if base is None:
+        return set()
+    return {b.name for b in ezdxf.readfile(str(base)).blocks}
+
+
 @register(
     "cad_export",
     description="Export GeoPackage/vector layers to a styled DXF (pbs_gis.cad.export_layers)",
-    params=["layers", "styles", "crs", "template_dxf", "dxfversion", "texts", "legend"],
+    params=["layers", "styles", "crs", "template_dxf", "dxfversion", "texts", "legend",
+            "blocks"],
 )
 def cad_export_template(params: dict, project_dir: Path, output_path: Path) -> bool:
     """Build :class:`LayerSpec` objects from ``params`` and emit a styled DXF.
@@ -125,8 +166,10 @@ def cad_export_template(params: dict, project_dir: Path, output_path: Path) -> b
         crs: Required project CRS (e.g. ``"EPSG:25833"``). Every source layer's
             CRS must match — a mismatch is a hard error (gis-safety).
         layers: List of specs, each ``{source, target_layer, style}`` plus
-            optional ``layer`` (name inside a multi-layer GPKG) and
-            ``label_field``. ``source`` is resolved relative to the project root.
+            optional ``layer`` (name inside a multi-layer GPKG), ``label_field``
+            and ``point_block`` (+ ``point_block_scale``: every point becomes a
+            reference to that template block). ``source`` is resolved relative
+            to the project root.
         styles: Path to a ``cad_styles.yaml`` (resolved rel. to project) OR an
             inline ``{name: {...}}`` style map.
         template_dxf (optional): Base DXF (title block/frame) to draw on top of.
@@ -139,6 +182,10 @@ def cad_export_template(params: dict, project_dir: Path, output_path: Path) -> b
             drawn via :func:`pbs_gis.cad.add_legend` — one row per exported
             layer (``auto``: all, in ``layers`` order), labelled with its
             ``target_layer`` and swatched with its style.
+        blocks (optional): List of ``{block, position: [x, y], layer?, scale?,
+            rotation?}``, each a reference to a block the template DXF defines
+            (Nutzungsschablone, Nordpfeil); an undefined name fails the step
+            before anything is written.
 
     Texts and legend are written into the DXF before the step returns, so a
     ``publiziert`` manifest hashes the final file. Without either parameter
@@ -164,6 +211,8 @@ def cad_export_template(params: dict, project_dir: Path, output_path: Path) -> b
                 style=entry["style"],
                 layer=entry.get("layer"),
                 label_field=entry.get("label_field"),
+                point_block=entry.get("point_block"),
+                point_block_scale=float(entry.get("point_block_scale", 1.0)),
             )
         )
 
@@ -175,6 +224,7 @@ def cad_export_template(params: dict, project_dir: Path, output_path: Path) -> b
 
     texts, legend = params.get("texts"), params.get("legend")
     annotate = bool(texts) or legend is not None
+    text_calls, legend_call = [], None
     if annotate:
         style_map = load_styles(styles) if isinstance(styles, Path) else styles
         text_calls, legend_call = _plan_annotations(texts, legend, specs, style_map)
@@ -182,6 +232,12 @@ def cad_export_template(params: dict, project_dir: Path, output_path: Path) -> b
     template_dxf = params.get("template_dxf")
     if template_dxf:
         template_dxf = (project_dir / template_dxf).resolve()
+
+    block_calls = []
+    if params.get("blocks") or any(s.point_block for s in specs):
+        block_calls = _plan_blocks(params.get("blocks"), specs,
+                                   _base_blocks(template_dxf, output_path))
+    annotate = annotate or bool(block_calls)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -197,9 +253,11 @@ def cad_export_template(params: dict, project_dir: Path, output_path: Path) -> b
     if annotate:
         import ezdxf
 
-        from pbs_gis.cad import add_legend, add_text
+        from pbs_gis.cad import add_legend, add_text, insert_block
 
         doc = ezdxf.readfile(str(output_path))
+        for name, position, kwargs in block_calls:
+            insert_block(doc, name, position, **kwargs)
         for text, position, kwargs in text_calls:
             add_text(doc, text, position, **kwargs)
         if legend_call is not None:

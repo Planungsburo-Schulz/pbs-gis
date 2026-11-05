@@ -70,6 +70,10 @@ class LayerSpec:
             file's default (single) layer.
         label_field: Attribute column to render as a per-feature text label at
             the geometry centroid. Requires the style to carry a ``text`` block.
+        point_block: Block (defined in the template DXF) referenced at every
+            point of the layer instead of a bare POINT — a plan symbol such as a
+            tree to be preserved is a block, not a dot.
+        point_block_scale: Uniform scale of those block references.
     """
 
     source: str | Path
@@ -77,6 +81,8 @@ class LayerSpec:
     style: str
     layer: str | None = None
     label_field: str | None = None
+    point_block: str | None = None
+    point_block_scale: float = 1.0
 
 
 @dataclass
@@ -277,14 +283,21 @@ def _polygon_rings(geom) -> list[list[tuple[float, float]]]:
 
 
 def _write_geometry(msp, geom, layer_name: str, style: Style, doc,
-                    result: LayerResult) -> None:
+                    result: LayerResult, spec: LayerSpec | None = None) -> None:
     """Write one Shapely geometry as DXF entities on *layer_name*, styled."""
     if geom is None or geom.is_empty:
         return
     gtype = geom.geom_type
     close = bool(style.entity.close) if (style.entity and style.entity.close) else False
 
-    if gtype == "Point":
+    if gtype == "Point" and spec is not None and spec.point_block is not None:
+        s = spec.point_block_scale
+        e = msp.add_blockref(spec.point_block, (geom.x, geom.y),
+                             dxfattribs={"layer": layer_name, "xscale": s,
+                                         "yscale": s, "zscale": s})
+        _attach_provenance(e, doc)
+        result.geometries += 1
+    elif gtype == "Point":
         e = msp.add_point((geom.x, geom.y), dxfattribs={"layer": layer_name})
         _attach_provenance(e, doc)
         result.geometries += 1
@@ -312,7 +325,7 @@ def _write_geometry(msp, geom, layer_name: str, style: Style, doc,
                 result.hatches += 1
     elif hasattr(geom, "geoms"):
         for part in geom.geoms:
-            _write_geometry(msp, part, layer_name, style, doc, result)
+            _write_geometry(msp, part, layer_name, style, doc, result, spec)
 
 
 def _write_label(msp, geom, text: str, layer_name: str, ts: TextStyle,
@@ -423,6 +436,11 @@ def export_layers(
                 f"Known: {sorted(style_map)}"
             )
 
+        if spec.point_block is not None and spec.point_block not in doc.blocks:
+            raise ExportError(
+                f"Layer {spec.target_layer!r}: point_block {spec.point_block!r} is not "
+                f"defined in the document; provide it via the template DXF")
+
         source = Path(spec.source)
         if not source.exists():
             raise ExportError(f"Layer {spec.target_layer!r}: source not found: {source}")
@@ -457,7 +475,7 @@ def export_layers(
 
         for _, row in gdf.iterrows():
             geom = row.geometry
-            _write_geometry(msp, geom, spec.target_layer, style, doc, result)
+            _write_geometry(msp, geom, spec.target_layer, style, doc, result, spec)
             if text_style_name is not None:
                 value = row.get(spec.label_field)
                 if value is not None and str(value).strip():

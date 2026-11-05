@@ -211,6 +211,83 @@ def test_cad_export_texte_und_legende_werfen_laut(tmp_path, params, match):
     assert not (tmp_path / "o.dxf").exists()
 
 
+def _vorlage_mit_block(tmp_path, name="Baum erhalten"):
+    """Template-DXF, das einen Block definiert — die Planzeichen kommen aus der Vorlage."""
+    doc = ezdxf.new("R2018")
+    doc.blocks.new(name).add_circle((0, 0), 1.0)
+    p = tmp_path / "vorlage.dxf"
+    doc.saveas(str(p))
+    return "vorlage.dxf"
+
+
+def _punkt_projekt(tmp_path):
+    from shapely.geometry import Point
+
+    _zwei_layer_projekt(tmp_path)
+    gpd.GeoDataFrame({"geometry": [Point(3, 4), Point(7, 8)]}, crs=CRS).to_file(
+        tmp_path / "Geodaten" / "baeume.gpkg", driver="GPKG")
+    return {"source": "Geodaten/baeume.gpkg", "target_layer": "Baeume", "style": "g",
+            "point_block": "Baum erhalten", "point_block_scale": 2.0}
+
+
+def _inserts(doc, layer=None):
+    return [e for e in doc.modelspace().query("INSERT")
+            if layer is None or e.dxf.layer == layer]
+
+
+def test_cad_export_punkt_block_setzt_je_punkt_einen_block_statt_eines_points(tmp_path):
+    spec = _punkt_projekt(tmp_path)
+    params = {"crs": CRS, "styles": _STYLES_MIT_TEXT, "layers": [spec],
+              "template_dxf": _vorlage_mit_block(tmp_path)}
+    out = tmp_path / "plan.dxf"
+    assert get_template("cad_export")(params, tmp_path, out) is True
+    doc = ezdxf.readfile(str(out))
+    refs = _inserts(doc, "Baeume")
+    assert sorted((r.dxf.insert.x, r.dxf.insert.y) for r in refs) == [(3, 4), (7, 8)]
+    assert {r.dxf.name for r in refs} == {"Baum erhalten"}
+    assert {r.dxf.xscale for r in refs} == {2.0}
+    assert not [e for e in doc.modelspace().query("POINT") if e.dxf.layer == "Baeume"]
+
+
+def test_cad_export_freie_bloecke_landen_an_position_und_ebene(tmp_path):
+    layers = _zwei_layer_projekt(tmp_path)
+    params = {"crs": CRS, "styles": _STYLES_MIT_TEXT, "layers": layers,
+              "template_dxf": _vorlage_mit_block(tmp_path, "Nordpfeil"),
+              "blocks": [{"block": "Nordpfeil", "position": [50, 60], "layer": "Planzeichen",
+                          "scale": 3.0, "rotation": 15.0}]}
+    out = tmp_path / "plan.dxf"
+    assert get_template("cad_export")(params, tmp_path, out) is True
+    (ref,) = _inserts(ezdxf.readfile(str(out)), "Planzeichen")
+    assert (ref.dxf.name, ref.dxf.insert.x, ref.dxf.insert.y) == ("Nordpfeil", 50, 60)
+    assert (ref.dxf.xscale, ref.dxf.rotation) == (3.0, 15.0)
+
+
+def test_cad_export_bloecke_verdoppeln_sich_beim_wiederholten_export_nicht(tmp_path):
+    spec = _punkt_projekt(tmp_path)
+    params = {"crs": CRS, "styles": _STYLES_MIT_TEXT, "layers": [spec],
+              "template_dxf": _vorlage_mit_block(tmp_path),
+              "blocks": [{"block": "Baum erhalten", "position": [0, 0]}]}
+    out = tmp_path / "plan.dxf"
+    for _ in range(2):
+        assert get_template("cad_export")(params, tmp_path, out) is True
+    assert len(_inserts(ezdxf.readfile(str(out)))) == 3
+
+
+@pytest.mark.parametrize("bad, match", [
+    ({"layers_patch": {"point_block": "Fehlt"}}, "Fehlt"),
+    ({"blocks": [{"block": "Fehlt", "position": [0, 0]}]}, "Fehlt"),
+    ({"blocks": [{"block": "Baum erhalten", "position": [0, 0], "farbe": "rot"}]}, "farbe"),
+    ({"blocks": [{"block": "Baum erhalten"}]}, "position"),
+])
+def test_cad_export_bloecke_werfen_laut_ohne_dxf(tmp_path, bad, match):
+    spec = {**_punkt_projekt(tmp_path), **bad.pop("layers_patch", {})}
+    params = {"crs": CRS, "styles": _STYLES_MIT_TEXT, "layers": [spec],
+              "template_dxf": _vorlage_mit_block(tmp_path), **bad}
+    with pytest.raises(ValueError, match=match):
+        get_template("cad_export")(params, tmp_path, tmp_path / "o.dxf")
+    assert not (tmp_path / "o.dxf").exists()
+
+
 def test_cad_export_missing_layers_raises(tmp_path):
     with pytest.raises(ValueError):
         get_template("cad_export")({"crs": CRS, "styles": {}, "layers": []},
