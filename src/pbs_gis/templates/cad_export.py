@@ -39,6 +39,7 @@ from pbs_gis.templates import register
 
 _TEXT_KEYS = frozenset({"text", "position", "style", "layer"})
 _LEGEND_KEYS = frozenset({"position", "entries"})
+_LEGEND_ENTRY_KEYS = frozenset({"layer", "label"})
 _BLOCK_KEYS = frozenset({"block", "position", "layer", "scale", "rotation"})
 
 
@@ -95,22 +96,31 @@ def _plan_annotations(texts, legend, specs, style_map):
         raise ValueError("cad_export: legend: 'entries' is required (auto or a layer list)")
     by_layer = {s.target_layer: s for s in specs}
     if legend["entries"] == "auto":
-        chosen = list(specs)
+        chosen = [(s, s.target_layer) for s in specs]
     else:
-        unknown = [n for n in legend["entries"] if n not in by_layer]
+        chosen, unknown = [], []
+        for i, item in enumerate(legend["entries"]):
+            if isinstance(item, dict):
+                _reject_unknown(item, _LEGEND_ENTRY_KEYS, f"legend.entries[{i}]")
+                name, label = item.get("layer"), item.get("label") or item.get("layer")
+            else:
+                name, label = item, item
+            if name in by_layer:
+                chosen.append((by_layer[name], label))
+            else:
+                unknown.append(name)
         if unknown:
             raise ValueError(
                 f"cad_export: legend: entries {unknown} are not exported layers "
                 f"({list(by_layer)})")
-        chosen = [by_layer[n] for n in legend["entries"]]
     entries = []
-    for s in chosen:
+    for s, label in chosen:
         style = style_map.get(s.style)
         if style is None:
             raise ValueError(
                 f"cad_export: legend: layer {s.target_layer!r} has unknown style "
                 f"{s.style!r}. Known: {sorted(style_map)}")
-        entries.append(LegendEntry(label=s.target_layer, style=style))
+        entries.append(LegendEntry(label=label, style=style))
     return text_calls, (entries, _position(legend.get("position"), "legend"))
 
 
@@ -181,7 +191,9 @@ def cad_export_template(params: dict, project_dir: Path, output_path: Path) -> b
         legend (optional): ``{position: [x, y], entries: auto | [layer names]}``,
             drawn via :func:`pbs_gis.cad.add_legend` — one row per exported
             layer (``auto``: all, in ``layers`` order), labelled with its
-            ``target_layer`` and swatched with its style.
+            ``target_layer`` and swatched with its style. An entry may be
+            ``{layer, label}`` instead of a name: the row then reads ``label``
+            (the Planzeichenerklärung wording) and keeps the layer's swatch.
         blocks (optional): List of ``{block, position: [x, y], layer?, scale?,
             rotation?}``, each a reference to a block the template DXF defines
             (Nutzungsschablone, Nordpfeil); an undefined name fails the step

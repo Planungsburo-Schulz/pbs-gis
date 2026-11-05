@@ -164,6 +164,20 @@ def test_cad_export_legende_mit_layerliste_in_ihrer_reihenfolge(tmp_path):
     assert [m.text for m in _mtexte(doc, "Legend")] == ["Baufeld"]
 
 
+def test_cad_export_legende_mit_eigener_beschriftung_je_ebene(tmp_path):
+    """Die Planzeichenerklärung nennt das Planzeichen mit Rechtsgrundlage, nicht den Ebenen-Namen."""
+    layers = _zwei_layer_projekt(tmp_path)
+    params = {"crs": CRS, "styles": _STYLES_MIT_TEXT, "layers": layers,
+              "legend": {"position": [0, 0], "entries": [
+                  {"layer": "Geltungsbereich",
+                   "label": "Grenze des räumlichen Geltungsbereichs (§ 9 Abs. 7 BauGB)"},
+                  "Baufeld"]}}
+    out = tmp_path / "plan.dxf"
+    assert get_template("cad_export")(params, tmp_path, out) is True
+    assert [m.text for m in _mtexte(ezdxf.readfile(str(out)), "Legend")] == [
+        "Grenze des räumlichen Geltungsbereichs (§ 9 Abs. 7 BauGB)", "Baufeld"]
+
+
 def test_cad_export_wiederholter_export_verdoppelt_texte_und_legende_nicht(tmp_path):
     layers = _zwei_layer_projekt(tmp_path)
     params = {"crs": CRS, "styles": _STYLES_MIT_TEXT, "layers": layers,
@@ -200,6 +214,10 @@ def test_cad_export_ohne_texte_und_legende_byte_gleich_dem_reinen_export(tmp_pat
     ({"texts": [{"text": "x", "position": [0]}]}, "position"),
     ({"legend": {"position": [0, 0], "entries": ["Unbekannt"]}}, "Unbekannt"),
     ({"legend": {"position": [0, 0]}}, "entries"),
+    ({"legend": {"position": [0, 0], "entries": [{"layer": "Unbekannt", "label": "x"}]}},
+     "Unbekannt"),
+    ({"legend": {"position": [0, 0], "entries": [{"layer": "Baufeld", "farbe": "x"}]}},
+     "farbe"),
 ])
 def test_cad_export_texte_und_legende_werfen_laut(tmp_path, params, match):
     layers = _zwei_layer_projekt(tmp_path)
